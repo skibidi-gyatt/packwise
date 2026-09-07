@@ -50,7 +50,7 @@ export default function TransportLanding({
   onSelect: (b: Container) => void;
 }) {
   const [saved, setSaved] = useState<Container[]>([]);
-  const [kind, setKind] = useState<'truck' | 'container' | null>(null);
+  const [kind, setKind] = useState<'truck' | 'container' | 'other' | null>(null);
   const [fields, setFields] = useState<Fields>(empty);
   const [photoMode, setPhotoMode] = useState(false);
   const [photos, setPhotos] = useState<{ container?: string; side?: string }>(
@@ -84,7 +84,7 @@ export default function TransportLanding({
   useEffect(() => {
     if (kind) heading.current?.focus();
   }, [kind]);
-  function start(nextKind: 'truck' | 'container', value?: Container) {
+  function start(nextKind: 'truck' | 'container' | 'other', value?: Container) {
     revision.current++;
     setKind(nextKind);
     setError('');
@@ -108,7 +108,7 @@ export default function TransportLanding({
           }
         : {
             ...empty,
-            name: nextKind === 'truck' ? 'My truck' : 'My container',
+            name: nextKind === 'other' ? 'My transport' : `My ${nextKind}`,
           },
     );
   }
@@ -293,7 +293,7 @@ export default function TransportLanding({
             <>
               <h2>What are you loading?</h2>
               <p className="tl-muted">
-                Start with a truck or shipping container.
+                Choose a truck, shipping container or other transport.
               </p>
               <div className="tl-choices">
                 <button onClick={() => start('truck')}>
@@ -309,6 +309,14 @@ export default function TransportLanding({
                   <span>
                     <strong>Shipping container</strong>
                     <small>Set up your container interior</small>
+                  </span>
+                  <ArrowRight size={20} />
+                </button>
+                <button onClick={() => start('other')}>
+                  <Box size={32} strokeWidth={1.5} />
+                  <span>
+                    <strong>Other</strong>
+                    <small>Set up another transport space</small>
                   </span>
                   <ArrowRight size={20} />
                 </button>
@@ -357,7 +365,7 @@ export default function TransportLanding({
                 <ArrowLeft size={16} /> All transports
               </button>
               <h2 tabIndex={-1} ref={heading}>
-                Set up your {kind === 'truck' ? 'truck' : 'container'}
+                Set up your {kind === 'other' ? 'transport' : kind}
               </h2>
               <p className="tl-muted">
                 Use the empty interior’s usable dimensions.

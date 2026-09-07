@@ -65,7 +65,7 @@ const schema = z.object({
     opening: z.tuple([z.number(), z.number()]),
     maxMass: z.number(),
     expansion: z.number(),
-    kind: z.enum(['truck', 'container']).optional(),
+    kind: z.enum(['truck', 'container', 'other']).optional(),
     loading: z.enum(['rear', 'top']).optional(),
     floorLimitKgM2: z.number().optional(),
   }),

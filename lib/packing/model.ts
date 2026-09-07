@@ -35,7 +35,7 @@ export type Container = {
   opening: [number, number];
   maxMass: number;
   expansion: number;
-  kind?: 'truck' | 'container';
+  kind?: 'truck' | 'container' | 'other';
   loading?: 'rear' | 'top';
   floorLimitKgM2?: number;
 };
