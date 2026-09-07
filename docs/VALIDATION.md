@@ -1,5 +1,7 @@
 # Enterprise validation record
 
+The operator upgrade adds eight tests (30 total) and a new browser-verified workflow. See [current operator validation](OPERATOR_WORKFLOW.md). The record below describes the earlier enterprise release and its original interface.
+
 Verified on 7 September 2026 against the local enterprise implementation.
 
 ## Automated checks

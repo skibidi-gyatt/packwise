@@ -60,6 +60,10 @@ import Scene from './Scene';
 import { ItemEditor, BagEditor } from './Editors';
 import PhotoInput from './PhotoInput';
 import ManifestInput from './ManifestInput';
+import CargoForm from './CargoForm';
+import TransportPicker from './TransportPicker';
+import GuidedLoading from './GuidedLoading';
+import { cargoCheck, checkCargoList, newCargo } from '@/lib/packing/readiness';
 const seed = freshCargo(),
   seedBase = solve(seed.items, seed.bag, 'baseline'),
   seedPlan = solve(seed.items, seed.bag);
@@ -78,6 +82,14 @@ type Change = {
   id?: string;
 };
 export default function Planner() {
+  const [phase, setPhase] = useState<'cargo' | 'plan' | 'load'>('cargo');
+  const [loadingIndex, setLoadingIndex] = useState(0);
+  const [loadingCompleted, setLoadingCompleted] = useState(0);
+  const [advanced, setAdvanced] = useState(false),
+    [expertEdit, setExpertEdit] = useState(false),
+    [pickerOpen, setPickerOpen] = useState(false),
+    [hasPlan, setHasPlan] = useState(false),
+    [onlyChecks, setOnlyChecks] = useState(false);
   const [allMetrics, setAllMetrics] = useState(false);
   const [items, setItems] = useState(seed.items),
     [bag, setBag] = useState(seed.bag),
@@ -88,7 +100,7 @@ export default function Planner() {
   const [plan, setPlan] = useState(seedPlan),
     [baseline, setBaseline] = useState(seedBase),
     [view, setView] = useState('baseline');
-  const [selected, setSelected] = useState<string | null>('P14'),
+  const [selected, setSelected] = useState<string | null>(null),
     [editing, setEditing] = useState<Item | null>(null),
     [assetOpen, setAssetOpen] = useState(false),
     [photoOpen, setPhotoOpen] = useState(false),
@@ -107,7 +119,7 @@ export default function Planner() {
     [patch, setPatch] = useState<CargoIntent | null>(null),
     [change, setChange] = useState<Change | null>(null);
   const [message, setMessage] = useState(
-    'Synthetic dispatch manifest loaded. Compare the simple load with a geometry- and weight-aware plan.',
+    'Your load is ready. Select cargo in the model to see its details.',
   );
   const revision = useRef(0),
     shown = view === 'baseline' ? baseline : plan;
@@ -117,6 +129,7 @@ export default function Planner() {
   const loads = useMemo(() => topLoads(shown.placements), [shown]);
   const filtered = items.filter(
     (i) =>
+      (!onlyChecks || cargoCheck(i).status !== 'ready') &&
       (stopFilter === 'all' || String(i.deliveryStop ?? 1) === stopFilter) &&
       `${i.id} ${i.name} ${i.destination}`
         .toLowerCase()
@@ -148,6 +161,29 @@ export default function Planner() {
     );
     return () => clearInterval(timer);
   }, [playing, shown.placements.length]);
+  function acceptCargo(nextItems: Item[], nextBag = bag) {
+    checkCargoList(nextItems);
+    setLoadingIndex(0);
+    setLoadingCompleted(0);
+    revision.current++;
+    setItems(nextItems);
+    setSelected((id) => (nextItems.some((i) => i.id === id) ? id : null));
+    setBag(nextBag);
+    setPhase('cargo');
+    setHasPlan(false);
+    setEditing(null);
+    setExpertEdit(false);
+    setAssetOpen(false);
+    setPhotoOpen(false);
+    setManifestOpen(false);
+    setPickerOpen(false);
+    setError('');
+    setChange(null);
+    setPatch(null);
+    setPlaying(false);
+    return true;
+  }
+  const checks = items.filter((i) => cargoCheck(i).status !== 'ready');
   function recompute(
     nextItems: Item[],
     nextBag: Container,
@@ -156,6 +192,11 @@ export default function Planner() {
     intent?: CargoIntent,
   ) {
     try {
+      checkCargoList(nextItems);
+      if (nextItems.some((i) => cargoCheck(i).status !== 'ready'))
+        throw new Error(
+          'Check the highlighted cargo measurements before optimizing.',
+        );
       const next = solve(nextItems, nextBag, 'optimized', nextPrefs),
         base = solve(nextItems, nextBag, 'baseline', nextPrefs);
       const old = shown;
@@ -199,6 +240,10 @@ export default function Planner() {
       setPlan(next);
       setBaseline(base);
       setView('optimized');
+      setLoadingIndex(0);
+      setLoadingCompleted(0);
+      setPhase('plan');
+      setHasPlan(true);
       setMoved(movedIds);
       setStep(30);
       setPlaying(false);
@@ -225,7 +270,7 @@ export default function Planner() {
       items,
       bag,
       prefs,
-      'Optimization complete. Every KPI is calculated from the selected load; no business savings are assumed.',
+      'Load plan ready. Review any cargo left out, then start loading.',
     );
     setBusy(false);
   }
@@ -297,13 +342,16 @@ export default function Planner() {
       'Synthetic manifest restored. Start with simple loading, then optimize.',
     );
     setView('baseline');
-    setSelected('P14');
+    setSelected(null);
     setChange(null);
     setPatch(null);
     setMoved([]);
     setSearch('');
     setStopFilter('all');
     setExploded(false);
+    setPhase('cargo');
+    setHasPlan(false);
+    setOnlyChecks(false);
   }
   function download(name: string, data: unknown) {
     const blob = new Blob(
@@ -332,6 +380,10 @@ export default function Planner() {
         ),
       ].join(' / '),
     }));
+  const priorityExample =
+    items.find((i) => i.id === 'P14')?.id ?? items[0]?.id ?? 'cargo ID';
+  const stackExample =
+    items.find((i) => i.id === 'C08')?.id ?? items[0]?.id ?? 'cargo ID';
   const priorityIds = items
     .filter((i) => i.access === 'immediate')
     .map((i) => i.id);
@@ -345,7 +397,7 @@ export default function Planner() {
       base: `Simple ${fmt(baseline.metrics.utilization, 1)}%`,
     },
     {
-      label: 'Cargo loaded',
+      label: 'Cargo in this plan',
       value: String(shown.placements.length),
       unit: `/ ${items.length}`,
       detail: `${shown.unpacked.length} pending assignment`,
@@ -376,7 +428,9 @@ export default function Planner() {
     },
   ];
   return (
-    <div className="cargo-app">
+    <div
+      className={`cargo-app ${advanced ? 'expert-mode' : 'operator-mode'} phase-${phase}`}
+    >
       <header className="cargo-header">
         <a className="cargo-brand" href="#main">
           <Box size={25} />
@@ -397,6 +451,7 @@ export default function Planner() {
           </button>
           <button
             className="quiet-button"
+            disabled={!hasPlan}
             onClick={() =>
               download('packwise-load-plan.json', {
                 schemaVersion: 2,
@@ -423,648 +478,863 @@ export default function Planner() {
         </div>
       </header>
       <main id="main">
-        <div className="planning-heading">
-          <div>
-            <h1>
-              Load planning{' '}
-              <span>{synthetic ? 'SG-042' : 'Working manifest'}</span>
-            </h1>
-            <p>
-              {items.length} cargo units · {routeStops.length} delivery{' '}
-              {routeStops.length === 1 ? 'stop' : 'stops'} · One transport asset
-            </p>
-          </div>
-          <div className="heading-actions">
-            <button className="quiet-button" disabled={busy} onClick={reset}>
-              <RotateCcw size={15} />
-              Reset demo
-            </button>
-            <button
-              className="primary"
-              onClick={() => void optimize()}
-              disabled={busy}
-            >
-              {busy ? (
-                <LoaderCircle className="spin" size={17} />
-              ) : (
-                <Layers size={17} />
-              )}
-              Optimize load
-              <ArrowRight size={17} />
-            </button>
-          </div>
-        </div>
-        <div className="route-line">
-          <button onClick={() => setAssetOpen(true)} className="asset-link">
-            <Truck size={19} />
-            <strong>{bag.name}</strong>
-            <span>{bag.dims.map((n) => fmt(n / 100, 1)).join(' × ')} m</span>
-            <SlidersHorizontal size={15} />
-          </button>
-          <div className="route-stops">
-            {routeStops.map((s) => (
-              <span key={s.id}>
-                <i style={{ background: s.color }} />
-                {s.id}. {s.name}
-                {s.id !== routeStops.at(-1)?.id && <ChevronRight size={13} />}
-              </span>
-            ))}
-          </div>
-          <span className="synthetic-note">
-            {synthetic ? 'Synthetic dispatch scenario' : 'Operator manifest'}
-          </span>
-        </div>
-        <section
-          className={`kpi-strip ${allMetrics ? 'show-all-metrics' : ''}`}
-          aria-label="Load performance"
-        >
-          {kpis.map((k) => (
-            <div className="kpi" key={k.label}>
-              <span>{k.label}</span>
-              <strong>
-                {k.value}
-                <small>{k.unit}</small>
-              </strong>
-              <p>{k.detail}</p>
-              <em>{k.base}</em>
-            </div>
-          ))}
-        </section>
-        <button
-          className="mobile-metrics-toggle"
-          aria-expanded={allMetrics}
-          onClick={() => setAllMetrics((v) => !v)}
-        >
-          {allMetrics
-            ? 'Show key metrics'
-            : 'Show payload, access and unused volume'}
-          <ChevronRight size={14} />
-        </button>
-        <div className="load-workspace">
-          <section className="digital-twin">
-            <div className="twin-toolbar">
-              <div>
-                <h2>Load digital twin</h2>
-                <span>
-                  {view === 'baseline' ? 'Simple loading' : 'Optimized load'} ·
-                  rear-door insertion
-                </span>
-              </div>
-              <Tabs
-                value={view}
-                onValueChange={(v) => {
-                  setView(String(v));
-                  setStep(30);
-                  setPlaying(false);
+        {phase === 'load' ? (
+          <GuidedLoading
+            plan={shown}
+            index={loadingIndex}
+            setIndex={setLoadingIndex}
+            completed={loadingCompleted}
+            setCompleted={setLoadingCompleted}
+            onExit={() => setPhase('plan')}
+          />
+        ) : (
+          <>
+            <nav className="workflow" aria-label="Load planning steps">
+              <button onClick={() => setPickerOpen(true)}>
+                1 <span>Select transport</span>
+              </button>
+              <button
+                aria-current={phase === 'cargo' ? 'step' : undefined}
+                onClick={() => {
+                  setPhase('cargo');
+                  setOnlyChecks(false);
                 }}
               >
-                <TabsList>
-                  <TabsTrigger value="baseline">Simple</TabsTrigger>
-                  <TabsTrigger value="optimized">Optimized</TabsTrigger>
-                </TabsList>
-              </Tabs>
-            </div>
-            <div className="cargo-scene-wrap">
-              <Scene
-                plan={shown}
-                selected={selected}
-                onSelect={pick}
-                exploded={exploded}
-                step={step}
-                moved={moved}
-              />
-              <div className="twin-controls">
-                <button
-                  aria-pressed={exploded}
-                  onClick={() => setExploded((v) => !v)}
-                >
-                  <Layers size={15} />
-                  {exploded ? 'Collapse layers' : 'Separate layers'}
-                </button>
-                <span>
-                  {exploded
-                    ? 'Exploded view; extra vertical spacing'
-                    : 'Drag to rotate · scroll to zoom'}
-                </span>
+                2 <span>Add cargo</span>
+              </button>
+              <button
+                onClick={() => {
+                  setPhase('cargo');
+                  setOnlyChecks(true);
+                }}
+              >
+                3 <span>Check{checks.length ? ` (${checks.length})` : ''}</span>
+              </button>
+              <button
+                disabled={!hasPlan}
+                aria-current={phase === 'plan' ? 'step' : undefined}
+                onClick={() => setPhase('plan')}
+              >
+                4 <span>Load plan</span>
+              </button>
+            </nav>
+            <div className="planning-heading">
+              <div>
+                <h1>
+                  {phase === 'cargo' ? 'Prepare your load' : 'Your load plan'}{' '}
+                  <span>{synthetic ? 'SG-042' : 'Working manifest'}</span>
+                </h1>
+                <p>
+                  {items.length} cargo units · {routeStops.length} delivery{' '}
+                  {routeStops.length === 1 ? 'stop' : 'stops'} · One transport
+                  asset
+                </p>
               </div>
-              <div className="twin-legend">
+              <div className="heading-actions">
+                <button
+                  className="quiet-button"
+                  disabled={busy}
+                  onClick={reset}
+                >
+                  <RotateCcw size={15} />
+                  Reset demo
+                </button>
+                <button
+                  className="primary"
+                  onClick={() =>
+                    phase === 'plan' ? setPhase('load') : void optimize()
+                  }
+                  disabled={
+                    busy ||
+                    (phase === 'cargo'
+                      ? !items.length || checks.length > 0
+                      : !shown.placements.length)
+                  }
+                >
+                  {busy ? (
+                    <LoaderCircle className="spin" size={17} />
+                  ) : (
+                    <Layers size={17} />
+                  )}
+                  {phase === 'plan'
+                    ? loadingIndex > 0
+                      ? `Resume loading · ${loadingCompleted}/${shown.placements.length}`
+                      : 'Start loading'
+                    : 'Optimize load'}
+                  <ArrowRight size={17} />
+                </button>
+              </div>
+            </div>
+            <div className="route-line">
+              <button
+                onClick={() => setPickerOpen(true)}
+                className="asset-link"
+              >
+                <Truck size={19} />
+                <strong>{bag.name}</strong>
+                <span>
+                  {bag.dims.map((n) => fmt(n / 100, 1)).join(' × ')} m
+                </span>
+                <SlidersHorizontal size={15} />
+              </button>
+              <div className="route-stops">
                 {routeStops.map((s) => (
                   <span key={s.id}>
                     <i style={{ background: s.color }} />
-                    Stop {s.id}
+                    {s.id}. {s.name}
+                    {s.id !== routeStops.at(-1)?.id && (
+                      <ChevronRight size={13} />
+                    )}
                   </span>
                 ))}
-                <span>
-                  <i className="com-dot" />
-                  Centre of mass
-                </span>
               </div>
-            </div>
-            <div className="twin-selection">
-              <span className="selected-id">{selected ?? 'Select cargo'}</span>
-              <div>
-                <strong>{selectedUnit?.name ?? 'Inspect a shipment'}</strong>
-                <p>
-                  {placed
-                    ? `${placed.dims.map((n) => fmt(n)).join(' × ')} cm · ${fmt(loads.get(placed.item.id) ?? 0)} kg on top · ${unloadBlockers(placed, shown.placements).length} extraction blockers`
-                    : selectedUnit
-                      ? 'Not loaded in this plan. See the pending-cargo explanation.'
-                      : 'Choose cargo in the model or manifest.'}
-                </p>
-              </div>
-              {selectedUnit && (
-                <button
-                  className="twin-edit"
-                  onClick={() => setEditing(selectedUnit)}
-                  aria-label={`Edit ${selectedUnit.id}`}
-                >
-                  <SlidersHorizontal size={16} />
-                  Edit
-                </button>
-              )}
-            </div>
-            <div className="sequence-control">
-              <button
-                className="play-button"
-                disabled={!shown.placements.length}
-                aria-label={
-                  playing ? 'Pause loading sequence' : 'Play loading sequence'
-                }
-                onClick={() => {
-                  if (!playing) setStep(0);
-                  setPlaying(!playing);
-                }}
-              >
-                {playing ? <Pause size={16} /> : <Play size={16} />}
-              </button>
-              <span>Load sequence</span>
-              <Slider
-                aria-label="Loading step"
-                min={0}
-                max={Math.max(1, shown.placements.length)}
-                step={1}
-                value={[Math.min(step, shown.placements.length)]}
-                onValueChange={(v) => {
-                  setStep(Array.isArray(v) ? v[0] : v);
-                  setPlaying(false);
-                }}
-              />
-              <span>
-                {Math.min(step, shown.placements.length)} /{' '}
-                {shown.placements.length}
+              <span className="synthetic-note">
+                {synthetic
+                  ? 'Synthetic dispatch scenario'
+                  : 'Operator manifest'}
               </span>
             </div>
-          </section>
-          <aside className="operations-panel">
-            <div className="ops-heading">
-              <ScanLine size={20} />
-              <h2>Cargo intelligence</h2>
-            </div>
-            <p className="intelligence-source">
-              Manifest facts + deterministic checks
-            </p>
-            <div className="semantic-list">
-              {(selectedUnit
-                ? [
-                    selectedUnit,
-                    ...items
-                      .filter(
-                        (i) =>
-                          i.id !== selectedUnit.id &&
-                          (i.fragile || i.mass >= 650),
-                      )
-                      .slice(0, 2),
-                  ]
-                : items.slice(0, 3)
-              ).map((i) => (
-                <button onClick={() => setSelected(i.id)} key={i.id}>
-                  <span className="cargo-code">{i.id}</span>
-                  <div>
-                    <strong>{i.name}</strong>
-                    <p>
-                      {i.mustUnloadFirst
-                        ? 'First to unload · clear rear path required'
-                        : i.stackable === false
-                          ? `No top loading${i.orientation === 'upright' ? ' · keep upright' : i.orientation === 'flat' ? ' · keep flat' : ''}`
-                          : i.mass >= 650
-                            ? `${fmt(i.mass)} kg · floor loading checked`
-                            : `Stop ${i.deliveryStop ?? 1} · top-load limit ${fmt(i.maxTopLoad)} kg`}
-                    </p>
-                    <small>
-                      {i.source === 'astra_estimate'
-                        ? 'AI inferred · review required'
-                        : i.source === 'sample'
-                          ? i.provenance?.handling === 'manual'
-                            ? 'Sample dimensions · operator rule'
-                            : 'Synthetic manifest fact'
-                          : `${i.source} provided`}
-                    </small>
-                  </div>
+            {phase === 'plan' && loadingCompleted > 0 && (
+              <p className="notice">
+                {loadingCompleted} units marked loaded on this open page.
+                Replanning or changing cargo starts a new checklist.
+              </p>
+            )}
+            {error && (
+              <p className="error" role="alert">
+                {error}
+              </p>
+            )}
+            {phase === 'cargo' &&
+              items.reduce(
+                (s, i) => s + (Number.isFinite(i.mass) ? i.mass : 0),
+                0,
+              ) > bag.maxMass && (
+                <p className="notice">
+                  This manifest is heavier than the transport capacity.
+                  Optimization will leave some cargo out; review those units
+                  before loading.
+                </p>
+              )}
+            {phase === 'cargo' && (
+              <section className="readiness-summary">
+                <div>
+                  <h2>
+                    {checks.length
+                      ? `${checks.length} cargo ${checks.length === 1 ? 'unit needs' : 'units need'} a check`
+                      : 'Ready when you are'}
+                  </h2>
+                  <p>
+                    {items.length
+                      ? 'Add your cargo, check any missing measurements, then optimize.'
+                      : 'Scan cargo, import a manifest or add a unit below.'}
+                  </p>
+                </div>
+                <button
+                  className="quiet-button"
+                  onClick={() => setOnlyChecks((v) => !v)}
+                >
+                  {onlyChecks
+                    ? 'Show all cargo'
+                    : `${items.length - checks.length} ready · ${checks.length} to check`}
+                </button>
+                {synthetic && (
+                  <button
+                    className="text-button"
+                    onClick={() => acceptCargo([])}
+                  >
+                    Start with an empty manifest
+                  </button>
+                )}
+              </section>
+            )}
+            {phase === 'plan' && (
+              <>
+                <section
+                  className={`kpi-strip ${allMetrics ? 'show-all-metrics' : ''}`}
+                  aria-label="Load performance"
+                >
+                  {kpis
+                    .filter((_, idx) => advanced || idx < 3)
+                    .map((k) => (
+                      <div className="kpi" key={k.label}>
+                        <span>{k.label}</span>
+                        <strong>
+                          {k.value}
+                          <small>{k.unit}</small>
+                        </strong>
+                        <p>{k.detail}</p>
+                        {advanced && <em>{k.base}</em>}
+                      </div>
+                    ))}
+                </section>
+                <button
+                  className="mobile-metrics-toggle"
+                  aria-expanded={allMetrics}
+                  onClick={() => setAllMetrics((v) => !v)}
+                >
+                  {allMetrics
+                    ? 'Show key metrics'
+                    : 'Show payload, access and unused volume'}
                   <ChevronRight size={14} />
                 </button>
-              ))}
-            </div>
-            <div className="balance-panel">
-              <h3>Payload distribution</h3>
-              <div className="balance-labels">
-                <span>
-                  Front half <b>{fmt(shown.metrics.frontMass)} kg</b>
-                </span>
-                <span>
-                  Rear half <b>{fmt(shown.metrics.rearMass)} kg</b>
-                </span>
-              </div>
-              <div className="mass-bar">
-                <span
-                  style={{
-                    width: `${shown.metrics.mass ? (shown.metrics.frontMass / shown.metrics.mass) * 100 : 0}%`,
-                  }}
-                />
-              </div>
-              <dl>
-                <div>
-                  <dt>Lateral balance</dt>
-                  <dd>{fmt(shown.metrics.balance)} / 100</dd>
-                </div>
-                <div>
-                  <dt>COM from bulkhead</dt>
-                  <dd>{fmt(shown.metrics.com[2] / 100, 2)} m</dd>
-                </div>
-                <div>
-                  <dt>Peak footprint load</dt>
-                  <dd>{fmt(shown.metrics.floorPeakKgM2)} kg/m²</dd>
-                </div>
-              </dl>
-              <p>Front/rear cargo mass, not axle loads.</p>
-            </div>
-            <div className="constraints-summary">
-              <ShieldCheck size={18} />
-              <div>
-                <strong>
-                  {shown.unpacked.length
-                    ? 'Feasible partial load'
-                    : 'Geometry checks satisfied'}
-                </strong>
-                <p>Payload · door path · support · top load</p>
-                <button onClick={() => setInfo(true)}>
-                  Review model assumptions
-                  <ArrowUpRight size={13} />
-                </button>
-              </div>
-            </div>
-          </aside>
-        </div>
-        <section className="copilot-panel">
-          <div className="copilot-title">
-            <Route size={22} />
-            <div>
-              <h2>Change the operation. Recalculate the load.</h2>
-              <p>
-                {api.available
-                  ? 'Astra turns operator intent into explicit constraints.'
-                  : 'Offline demo rules · connect Astra for open-ended cargo reasoning.'}
-              </p>
-            </div>
-          </div>
-          <form
-            onSubmit={(e) => {
-              e.preventDefault();
-              void request(prompt);
-            }}
-          >
-            <input
-              aria-label="Operator request"
-              value={prompt}
-              maxLength={1500}
-              onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Shipment P14 must be unloaded first."
-              disabled={busy}
-            />
-            <button
-              className="primary"
-              disabled={busy || !prompt.trim()}
-              type="submit"
-            >
-              {busy ? (
-                <LoaderCircle size={16} className="spin" />
-              ) : (
-                <ArrowRight size={17} />
-              )}
-              Replan
-            </button>
-          </form>
-          <div className="request-suggestions">
-            <button
-              disabled={busy}
-              onClick={() =>
-                void request('Shipment P14 must be unloaded first.')
-              }
-            >
-              <ArrowDownToLine size={14} />
-              P14 unloads first
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => void request('Do not stack anything on C08.')}
-            >
-              <ShieldCheck size={14} />
-              No stacking on C08
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => void request('Prioritize balance')}
-            >
-              <Truck size={14} />
-              Prioritize balance
-            </button>
-            <button
-              disabled={busy}
-              onClick={() => void request('Respect delivery stops')}
-            >
-              <Route size={14} />
-              Respect delivery stops
-            </button>
-          </div>
-          {patch && (
-            <div className="constraint-patch">
-              <strong>
-                {api.available
-                  ? 'Astra interpreted'
-                  : 'Offline rule interpreted'}
-              </strong>
-              {patch.changes.map((c) => (
-                <span key={c.id}>
-                  {c.id}
-                  {c.first ? ' → FIRST UNLOAD' : ''}
-                  {c.stop ? ` · STOP ${c.stop}` : ''}
-                  {c.noStack ? ' · NO TOP LOAD' : ''}
-                  {c.remove ? ' · REMOVE' : ''}
-                </span>
-              ))}
-              {patch.balance && <span>BALANCE PRIORITY → HIGH</span>}
-              {patch.route && <span>DELIVERY ORDER → HIGH</span>}
-              <ArrowRight size={15} />
-              <span>Deterministic solver</span>
-            </div>
-          )}
-          <div className="result-explanation" aria-live="polite">
-            <Check size={17} />
-            <div>
-              <p>{message}</p>
-              {change && (
-                <strong>
-                  {change.id
-                    ? `${change.id} extraction blockers: ${change.beforeBlockers} → ${change.afterBlockers}. `
-                    : ''}
-                  {change.moved} cargo units moved. Cubic utilization{' '}
-                  {delta(change.utilization)} pp; same-target access{' '}
-                  {delta(change.access)} points.
-                </strong>
-              )}
-            </div>
-          </div>
-          {error && (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          )}
-        </section>
-        <section className="manifest-section">
-          <div className="manifest-heading">
-            <div>
-              <h2>
-                Cargo manifest <span>{items.length} units</span>
-              </h2>
-              <p>
-                Measurements and company handling rules take precedence over AI
-                estimates.
-              </p>
-            </div>
-            <div>
-              <button
-                className="quiet-button"
-                onClick={() => setPhotoOpen(true)}
-              >
-                <Camera size={16} />
-                Analyze photos
-              </button>
-              <button
-                className="quiet-button"
-                onClick={() => setManifestOpen(true)}
-              >
-                <Download size={16} />
-                Import manifest
-              </button>
-              <button
-                className="quiet-button"
-                onClick={() => {
-                  if (items.length >= 30) {
-                    setError('The prototype supports at most 30 cargo units.');
-                    return;
-                  }
-                  setEditing({
-                    id: `N${Date.now().toString().slice(-6)}`,
-                    name: 'New cargo',
-                    dims: [120, 100, 100],
-                    mass: 300,
-                    color: stops[0].color,
-                    rigidity: 'rigid',
-                    minRatio: 1,
-                    fragile: false,
-                    orientation: 'upright',
-                    access: 'normal',
-                    required: true,
-                    maxTopLoad: 0,
-                    stackable: false,
-                    deliveryStop: 1,
-                    destination: stops[0].name,
-                    source: 'manual',
-                    confidence: 1,
-                    notes:
-                      'Enter verified external dimensions and handling limits.',
-                  });
-                }}
-              >
-                <Plus size={16} />
-                Add cargo
-              </button>
-            </div>
-          </div>
-          <div className="manifest-filter">
-            <label>
-              <Search size={16} />
-              <input
-                aria-label="Search cargo"
-                placeholder="Search ID, cargo or destination"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </label>
-            <Tabs
-              value={stopFilter}
-              onValueChange={(v) => setStopFilter(String(v))}
-            >
-              <TabsList>
-                <TabsTrigger value="all">All stops</TabsTrigger>
-                {routeStops.map((s) => (
-                  <TabsTrigger key={s.id} value={String(s.id)}>
-                    Stop {s.id}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-            <button
-              className="text-button"
-              onClick={() =>
-                download('cargo-manifest.json', manifestText(items))
-              }
-            >
-              Download JSON
-            </button>
-          </div>
-          <Table className="cargo-table">
-            <TableHeader>
-              <TableRow>
-                <TableHead>Cargo ID / description</TableHead>
-                <TableHead>W × H × L · cm</TableHead>
-                <TableHead>Weight</TableHead>
-                <TableHead>Destination</TableHead>
-                <TableHead>Stacking</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead>
-                  <span className="sr-only">Edit cargo</span>
-                </TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filtered.map((i) => {
-                const loaded = shown.placements.find((p) => p.item.id === i.id);
-                return (
-                  <TableRow key={i.id} data-selected={selected === i.id}>
-                    <TableCell>
-                      <button
-                        className="manifest-select"
-                        onClick={() => setSelected(i.id)}
+                {!advanced && (
+                  <p className="balance-note">
+                    Weight balance:{' '}
+                    {shown.metrics.balance >= 75
+                      ? 'Mostly centred'
+                      : shown.metrics.balance >= 50
+                        ? 'Uneven — review placement'
+                        : 'Concentrated to one side — review placement'}{' '}
+                    · {shown.unpacked.length} units not loaded.{' '}
+                    <button
+                      className="text-button"
+                      onClick={() => setAdvanced(true)}
+                    >
+                      See details
+                    </button>
+                  </p>
+                )}
+                <div className="load-workspace">
+                  <section className="digital-twin">
+                    <div className="twin-toolbar">
+                      <div>
+                        <h2>3D load plan</h2>
+                        <span>
+                          {view === 'baseline'
+                            ? 'Simple loading'
+                            : 'Optimized load'}{' '}
+                          · rear-door insertion
+                        </span>
+                      </div>
+                      <Tabs
+                        value={view}
+                        onValueChange={(v) => {
+                          setView(String(v));
+                          setLoadingIndex(0);
+                          setLoadingCompleted(0);
+                          setStep(30);
+                          setPlaying(false);
+                        }}
                       >
+                        <TabsList>
+                          <TabsTrigger value="baseline">Simple</TabsTrigger>
+                          <TabsTrigger value="optimized">Optimized</TabsTrigger>
+                        </TabsList>
+                      </Tabs>
+                    </div>
+                    <div className="cargo-scene-wrap">
+                      <Scene
+                        plan={shown}
+                        selected={selected}
+                        onSelect={pick}
+                        exploded={exploded}
+                        step={step}
+                        moved={moved}
+                        showEngineering={advanced}
+                      />
+                      <div className="twin-controls">
+                        <button
+                          aria-pressed={exploded}
+                          onClick={() => setExploded((v) => !v)}
+                        >
+                          <Layers size={15} />
+                          {exploded ? 'Collapse layers' : 'Separate layers'}
+                        </button>
+                        <span>
+                          {exploded
+                            ? 'Exploded view; extra vertical spacing'
+                            : 'Drag to rotate · scroll to zoom'}
+                        </span>
+                      </div>
+                      <div className="twin-legend">
+                        {routeStops.map((s) => (
+                          <span key={s.id}>
+                            <i style={{ background: s.color }} />
+                            Stop {s.id}
+                          </span>
+                        ))}
+                        <span>
+                          <i className="com-dot" />
+                          Centre of mass
+                        </span>
+                      </div>
+                    </div>
+                    <div className="twin-selection">
+                      <span className="selected-id">
+                        {selected ?? 'Select cargo'}
+                      </span>
+                      <div>
+                        <strong>
+                          {selectedUnit?.name ?? 'Inspect a shipment'}
+                        </strong>
+                        <p>
+                          {placed
+                            ? advanced
+                              ? `${placed.dims.map((n) => fmt(n)).join(' × ')} cm · ${fmt(loads.get(placed.item.id) ?? 0)} kg on top · ${unloadBlockers(placed, shown.placements).length} extraction blockers`
+                              : `${fmt(placed.item.mass)} kg · ${placed.item.stackable === false ? 'Keep the top clear' : 'Stack within the supplied limit'} · ${placed.item.orientation === 'any' ? 'May be turned' : 'Keep this side up'}`
+                            : selectedUnit
+                              ? 'Not loaded in this plan. See the pending-cargo explanation.'
+                              : 'Choose cargo in the model or manifest.'}
+                        </p>
+                      </div>
+                      {selectedUnit && (
+                        <button
+                          className="twin-edit"
+                          onClick={() => setEditing(selectedUnit)}
+                          aria-label={`Edit ${selectedUnit.id}`}
+                        >
+                          <SlidersHorizontal size={16} />
+                          Edit
+                        </button>
+                      )}
+                    </div>
+                    <div className="sequence-control">
+                      <button
+                        className="play-button"
+                        disabled={!shown.placements.length}
+                        aria-label={
+                          playing
+                            ? 'Pause loading sequence'
+                            : 'Play loading sequence'
+                        }
+                        onClick={() => {
+                          if (!playing) setStep(0);
+                          setPlaying(!playing);
+                        }}
+                      >
+                        {playing ? <Pause size={16} /> : <Play size={16} />}
+                      </button>
+                      <span>Load sequence</span>
+                      <Slider
+                        aria-label="Loading step"
+                        min={0}
+                        max={Math.max(1, shown.placements.length)}
+                        step={1}
+                        value={[Math.min(step, shown.placements.length)]}
+                        onValueChange={(v) => {
+                          setStep(Array.isArray(v) ? v[0] : v);
+                          setPlaying(false);
+                        }}
+                      />
+                      <span>
+                        {Math.min(step, shown.placements.length)} /{' '}
+                        {shown.placements.length}
+                      </span>
+                    </div>
+                  </section>
+                  <aside className="operations-panel">
+                    <div className="ops-heading">
+                      <ScanLine size={20} />
+                      <h2>Cargo intelligence</h2>
+                    </div>
+                    <p className="intelligence-source">
+                      Manifest facts + deterministic checks
+                    </p>
+                    <div className="semantic-list">
+                      {(selectedUnit
+                        ? [
+                            selectedUnit,
+                            ...items
+                              .filter(
+                                (i) =>
+                                  i.id !== selectedUnit.id &&
+                                  (i.fragile || i.mass >= 650),
+                              )
+                              .slice(0, 2),
+                          ]
+                        : items.slice(0, 3)
+                      ).map((i) => (
+                        <button onClick={() => setSelected(i.id)} key={i.id}>
+                          <span className="cargo-code">{i.id}</span>
+                          <div>
+                            <strong>{i.name}</strong>
+                            <p>
+                              {i.mustUnloadFirst
+                                ? 'First to unload · clear rear path required'
+                                : i.stackable === false
+                                  ? `No top loading${i.orientation === 'upright' ? ' · keep upright' : i.orientation === 'flat' ? ' · keep flat' : ''}`
+                                  : i.mass >= 650
+                                    ? `${fmt(i.mass)} kg · floor loading checked`
+                                    : `Stop ${i.deliveryStop ?? 1} · top-load limit ${fmt(i.maxTopLoad)} kg`}
+                            </p>
+                            <small>
+                              {i.source === 'astra_estimate'
+                                ? 'AI inferred · review required'
+                                : i.source === 'sample'
+                                  ? i.provenance?.handling === 'manual'
+                                    ? 'Sample dimensions · operator rule'
+                                    : 'Synthetic manifest fact'
+                                  : `${i.source} provided`}
+                            </small>
+                          </div>
+                          <ChevronRight size={14} />
+                        </button>
+                      ))}
+                    </div>
+                    <div className="balance-panel">
+                      <h3>Payload distribution</h3>
+                      <div className="balance-labels">
+                        <span>
+                          Front half <b>{fmt(shown.metrics.frontMass)} kg</b>
+                        </span>
+                        <span>
+                          Rear half <b>{fmt(shown.metrics.rearMass)} kg</b>
+                        </span>
+                      </div>
+                      <div className="mass-bar">
                         <span
                           style={{
-                            background:
-                              stops[((i.deliveryStop ?? 1) - 1) % 3].color,
+                            width: `${shown.metrics.mass ? (shown.metrics.frontMass / shown.metrics.mass) * 100 : 0}%`,
                           }}
                         />
-                        <strong>{i.id}</strong>
-                        <span>{i.name}</span>
-                      </button>
-                    </TableCell>
-                    <TableCell>{i.dims.join(' × ')}</TableCell>
-                    <TableCell>{fmt(i.mass)} kg</TableCell>
-                    <TableCell>
-                      <b>Stop {i.deliveryStop ?? 1}</b>
-                      <small>{i.destination}</small>
-                    </TableCell>
-                    <TableCell>
-                      {i.stackable === false ? (
-                        <span className="no-stack">No top loading</span>
+                      </div>
+                      <dl>
+                        <div>
+                          <dt>Lateral balance</dt>
+                          <dd>{fmt(shown.metrics.balance)} / 100</dd>
+                        </div>
+                        <div>
+                          <dt>COM from bulkhead</dt>
+                          <dd>{fmt(shown.metrics.com[2] / 100, 2)} m</dd>
+                        </div>
+                        <div>
+                          <dt>Peak footprint load</dt>
+                          <dd>{fmt(shown.metrics.floorPeakKgM2)} kg/m²</dd>
+                        </div>
+                      </dl>
+                      <p>Front/rear cargo mass, not axle loads.</p>
+                    </div>
+                    <div className="constraints-summary">
+                      <ShieldCheck size={18} />
+                      <div>
+                        <strong>
+                          {shown.unpacked.length
+                            ? 'Feasible partial load'
+                            : 'Geometry checks satisfied'}
+                        </strong>
+                        <p>Payload · door path · support · top load</p>
+                        <button onClick={() => setInfo(true)}>
+                          Review model assumptions
+                          <ArrowUpRight size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </aside>
+                </div>
+                <section className="copilot-panel">
+                  <div className="copilot-title">
+                    <Route size={22} />
+                    <div>
+                      <h2>Need to change the load?</h2>
+                      <p>
+                        {api.available
+                          ? 'Tell Astra what needs to change, using cargo IDs or descriptions.'
+                          : 'Offline assistant · use a cargo ID and one of the examples below.'}
+                      </p>
+                    </div>
+                  </div>
+                  <form
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void request(prompt);
+                    }}
+                  >
+                    <input
+                      aria-label="Operator request"
+                      value={prompt}
+                      maxLength={1500}
+                      onChange={(e) => setPrompt(e.target.value)}
+                      placeholder={`${priorityExample} must be unloaded first.`}
+                      disabled={busy}
+                    />
+                    <button
+                      className="primary"
+                      disabled={busy || !prompt.trim()}
+                      type="submit"
+                    >
+                      {busy ? (
+                        <LoaderCircle size={16} className="spin" />
                       ) : (
-                        `${fmt(i.maxTopLoad)} kg max`
+                        <ArrowRight size={17} />
                       )}
-                    </TableCell>
-                    <TableCell>
-                      <span
-                        className={`load-status ${loaded ? 'loaded' : 'pending'}`}
-                      >
-                        {loaded ? <Check size={12} /> : <Box size={12} />}{' '}
-                        {loaded ? `Loaded · ${loaded.order}` : 'Pending'}
-                      </span>
-                      {i.mustUnloadFirst && (
-                        <small className="first-note">First unload</small>
+                      Replan
+                    </button>
+                  </form>
+                  <div className="request-suggestions">
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void request(
+                          `${priorityExample} must be unloaded first.`,
+                        )
+                      }
+                    >
+                      <ArrowDownToLine size={14} />
+                      {priorityExample} unloads first
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() =>
+                        void request(
+                          `Do not stack anything on ${stackExample}.`,
+                        )
+                      }
+                    >
+                      <ShieldCheck size={14} />
+                      No stacking on {stackExample}
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() => void request('Prioritize balance')}
+                    >
+                      <Truck size={14} />
+                      Prioritize balance
+                    </button>
+                    <button
+                      disabled={busy}
+                      onClick={() => void request('Respect delivery stops')}
+                    >
+                      <Route size={14} />
+                      Respect delivery stops
+                    </button>
+                  </div>
+                  {advanced && patch && (
+                    <div className="constraint-patch">
+                      <strong>
+                        {api.available
+                          ? 'Astra interpreted'
+                          : 'Offline rule interpreted'}
+                      </strong>
+                      {patch.changes.map((c) => (
+                        <span key={c.id}>
+                          {c.id}
+                          {c.first ? ' → FIRST UNLOAD' : ''}
+                          {c.stop ? ` · STOP ${c.stop}` : ''}
+                          {c.noStack ? ' · NO TOP LOAD' : ''}
+                          {c.remove ? ' · REMOVE' : ''}
+                        </span>
+                      ))}
+                      {patch.balance && <span>BALANCE PRIORITY → HIGH</span>}
+                      {patch.route && <span>DELIVERY ORDER → HIGH</span>}
+                      <ArrowRight size={15} />
+                      <span>Deterministic solver</span>
+                    </div>
+                  )}
+                  <div className="result-explanation" aria-live="polite">
+                    <Check size={17} />
+                    <div>
+                      <p>{message}</p>
+                      {advanced && change && (
+                        <strong>
+                          {change.id
+                            ? `${change.id} extraction blockers: ${change.beforeBlockers} → ${change.afterBlockers}. `
+                            : ''}
+                          {change.moved} cargo units moved. Cubic utilization{' '}
+                          {delta(change.utilization)} pp; same-target access{' '}
+                          {delta(change.access)} points.
+                        </strong>
                       )}
-                    </TableCell>
-                    <TableCell>
+                    </div>
+                  </div>
+                  {error && (
+                    <p className="error" role="alert">
+                      {error}
+                    </p>
+                  )}
+                </section>
+              </>
+            )}
+            {(phase === 'cargo' || advanced) && (
+              <section className="manifest-section">
+                <div className="manifest-heading">
+                  <div>
+                    <h2>
+                      Cargo manifest <span>{items.length} units</span>
+                    </h2>
+                    <p>
+                      Measurements and company handling rules take precedence
+                      over AI estimates.
+                    </p>
+                  </div>
+                  <div>
+                    <button
+                      className="quiet-button"
+                      onClick={() => setPhotoOpen(true)}
+                    >
+                      <Camera size={16} />
+                      Scan cargo
+                    </button>
+                    <button
+                      className="quiet-button"
+                      onClick={() => setManifestOpen(true)}
+                    >
+                      <Download size={16} />
+                      Import manifest
+                    </button>
+                    <button
+                      className="quiet-button"
+                      onClick={() => {
+                        if (items.length >= 30) {
+                          setError(
+                            'The prototype supports at most 30 cargo units.',
+                          );
+                          return;
+                        }
+                        setExpertEdit(false);
+                        setEditing(
+                          newCargo(`N${Date.now().toString().slice(-6)}`),
+                        );
+                      }}
+                    >
+                      <Plus size={16} />
+                      Add manually
+                    </button>
+                  </div>
+                </div>
+                <div className="manifest-filter">
+                  <label>
+                    <Search size={16} />
+                    <input
+                      aria-label="Search cargo"
+                      placeholder="Search ID, cargo or destination"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </label>
+                  <Tabs
+                    value={stopFilter}
+                    onValueChange={(v) => setStopFilter(String(v))}
+                  >
+                    <TabsList>
+                      <TabsTrigger value="all">All stops</TabsTrigger>
+                      {routeStops.map((s) => (
+                        <TabsTrigger key={s.id} value={String(s.id)}>
+                          Stop {s.id}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </Tabs>
+                  <button
+                    className="text-button"
+                    onClick={() =>
+                      download('cargo-manifest.json', manifestText(items))
+                    }
+                  >
+                    {advanced ? 'Download JSON' : 'Export manifest'}
+                  </button>
+                </div>
+                <Table className="cargo-table">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Cargo ID / description</TableHead>
+                      <TableHead>W × H × L · cm</TableHead>
+                      <TableHead>Weight</TableHead>
+                      <TableHead>Destination</TableHead>
+                      <TableHead>Stacking</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>
+                        <span className="sr-only">Edit cargo</span>
+                      </TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filtered.map((i) => {
+                      const loaded = shown.placements.find(
+                        (p) => p.item.id === i.id,
+                      );
+                      return (
+                        <TableRow key={i.id} data-selected={selected === i.id}>
+                          <TableCell>
+                            <button
+                              className="manifest-select"
+                              onClick={() =>
+                                phase === 'cargo'
+                                  ? setEditing(i)
+                                  : setSelected(i.id)
+                              }
+                            >
+                              <span
+                                style={{
+                                  background:
+                                    stops[((i.deliveryStop ?? 1) - 1) % 3]
+                                      .color,
+                                }}
+                              />
+                              <strong>{i.id}</strong>
+                              <span>{i.name}</span>
+                            </button>
+                          </TableCell>
+                          <TableCell>
+                            {i.dims.map((n) => n || '—').join(' × ')}
+                          </TableCell>
+                          <TableCell>
+                            {i.mass ? `${fmt(i.mass)} kg` : 'Required'}
+                          </TableCell>
+                          <TableCell>
+                            <b>Stop {i.deliveryStop ?? 1}</b>
+                            <small>{i.destination}</small>
+                          </TableCell>
+                          <TableCell>
+                            {i.stackable === false ? (
+                              <span className="no-stack">No top loading</span>
+                            ) : (
+                              `${fmt(i.maxTopLoad)} kg max`
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {phase === 'cargo' ? (
+                              <button
+                                className={`cargo-check ${cargoCheck(i).status}`}
+                                onClick={() => setEditing(i)}
+                              >
+                                {cargoCheck(i).label}
+                              </button>
+                            ) : (
+                              <span
+                                className={`load-status ${loaded ? 'loaded' : 'pending'}`}
+                              >
+                                {loaded ? (
+                                  <Check size={12} />
+                                ) : (
+                                  <Box size={12} />
+                                )}{' '}
+                                {loaded
+                                  ? `Planned · ${loaded.order}`
+                                  : 'Not loaded'}
+                              </span>
+                            )}
+                            {i.mustUnloadFirst && (
+                              <small className="first-note">First unload</small>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <button
+                              className="icon-button"
+                              aria-label={`Edit cargo ${i.id}`}
+                              onClick={() => setEditing(i)}
+                            >
+                              <SlidersHorizontal size={16} />
+                            </button>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+                {!filtered.length && (
+                  <p className="empty-state">
+                    {items.length
+                      ? 'No cargo matches these filters. Clear the search or choose All stops.'
+                      : 'No cargo units. Import a manifest, add cargo, or reset the demo.'}
+                  </p>
+                )}
+              </section>
+            )}
+            {phase === 'plan' && shown.unpacked.length > 0 && (
+              <section className="pending-section">
+                <h2>{shown.unpacked.length} cargo units need assignment</h2>
+                {shown.unpacked.map((u) => (
+                  <div key={u.item.id}>
+                    <strong>
+                      {u.item.id} · {u.item.name}
+                    </strong>
+                    <p>{u.reason}</p>
+                    <button
+                      className="text-button"
+                      onClick={() => setEditing(u.item)}
+                    >
+                      Review cargo
+                      <ChevronRight size={14} />
+                    </button>
+                  </div>
+                ))}
+              </section>
+            )}
+            {phase === 'plan' && advanced && (
+              <section className="loading-instructions">
+                <div>
+                  <h2>Loading sequence</h2>
+                  <span>
+                    Rear-door insertion · {shown.placements.length} steps
+                  </span>
+                </div>
+                <ol>
+                  {shown.placements.map((p) => (
+                    <li key={p.item.id}>
                       <button
-                        className="icon-button"
-                        aria-label={`Edit cargo ${i.id}`}
-                        onClick={() => setEditing(i)}
+                        onClick={() => {
+                          setSelected(p.item.id);
+                          setStep(p.order);
+                          setPlaying(false);
+                          document
+                            .getElementById('main')
+                            ?.scrollIntoView({ behavior: 'auto' });
+                        }}
                       >
-                        <SlidersHorizontal size={16} />
+                        <span>{String(p.order).padStart(2, '0')}</span>
+                        <strong>{p.item.id}</strong>
+                        <p>{instruction(p, shown)}</p>
+                        <ChevronRight size={15} />
                       </button>
-                    </TableCell>
-                  </TableRow>
-                );
-              })}
-            </TableBody>
-          </Table>
-          {!filtered.length && (
-            <p className="empty-state">
-              {items.length
-                ? 'No cargo matches these filters. Clear the search or choose All stops.'
-                : 'No cargo units. Import a manifest, add cargo, or reset the demo.'}
-            </p>
-          )}
-        </section>
-        {shown.unpacked.length > 0 && (
-          <section className="pending-section">
-            <h2>{shown.unpacked.length} cargo units need assignment</h2>
-            {shown.unpacked.map((u) => (
-              <div key={u.item.id}>
-                <strong>
-                  {u.item.id} · {u.item.name}
-                </strong>
-                <p>{u.reason}</p>
+                    </li>
+                  ))}
+                </ol>
+              </section>
+            )}
+            <div className="advanced-toggle">
+              <button
+                className="quiet-button"
+                aria-expanded={advanced}
+                onClick={() => setAdvanced((v) => !v)}
+              >
+                <SlidersHorizontal size={16} />
+                {advanced ? 'Hide advanced settings' : 'Advanced settings'}
+              </button>
+              {advanced && (
                 <button
-                  className="text-button"
-                  onClick={() => setEditing(u.item)}
+                  className="quiet-button"
+                  onClick={() => setAssetOpen(true)}
                 >
-                  Review cargo
-                  <ChevronRight size={14} />
+                  Transport load limits
                 </button>
-              </div>
-            ))}
-          </section>
+              )}
+            </div>
+          </>
         )}
-        <section className="loading-instructions">
-          <div>
-            <h2>Loading sequence</h2>
-            <span>Rear-door insertion · {shown.placements.length} steps</span>
-          </div>
-          <ol>
-            {shown.placements.map((p) => (
-              <li key={p.item.id}>
-                <button
-                  onClick={() => {
-                    setSelected(p.item.id);
-                    setStep(p.order);
-                    setPlaying(false);
-                    document
-                      .getElementById('main')
-                      ?.scrollIntoView({ behavior: 'auto' });
-                  }}
-                >
-                  <span>{String(p.order).padStart(2, '0')}</span>
-                  <strong>{p.item.id}</strong>
-                  <p>{instruction(p, shown)}</p>
-                  <ChevronRight size={15} />
-                </button>
-              </li>
-            ))}
-          </ol>
-        </section>
         <footer>
           <span>Packwise Cargo · Operational decision support</span>
           <span>
-            {plan.tried} reproducible candidate plans · No certified loading
-            approval
+            {advanced ? `${plan.tried} candidate plans · ` : ''}Check lifting,
+            securing and vehicle limits before dispatch
           </span>
         </footer>
       </main>
-      {editing && (
+      {pickerOpen && (
+        <TransportPicker
+          current={bag}
+          onClose={() => setPickerOpen(false)}
+          onSelect={(b) => acceptCargo(items, b)}
+        />
+      )}
+      {editing && !expertEdit && (
+        <CargoForm
+          item={editing}
+          items={items}
+          onClose={() => setEditing(null)}
+          onSave={acceptCargo}
+          onDelete={() => acceptCargo(items.filter((i) => i.id !== editing.id))}
+          onAdvanced={() => setExpertEdit(true)}
+        />
+      )}
+      {editing && expertEdit && (
         <ItemEditor
           key={editing.id}
           item={editing}
           bag={bag}
           onClose={() => setEditing(null)}
           onSave={(i) =>
-            recompute(
+            acceptCargo(
               items.some((x) => x.id === i.id)
                 ? items.map((x) => (x.id === i.id ? i : x))
                 : [...items, i],
@@ -1072,7 +1342,7 @@ export default function Planner() {
             )
           }
           onDelete={() =>
-            recompute(
+            acceptCargo(
               items.filter((i) => i.id !== editing.id),
               bag,
             )
@@ -1083,21 +1353,14 @@ export default function Planner() {
         <BagEditor
           bag={bag}
           onClose={() => setAssetOpen(false)}
-          onSave={(b) => recompute(items, b)}
+          onSave={(b) => acceptCargo(items, b)}
         />
       )}
       {manifestOpen && (
         <ManifestInput
           items={items}
           onClose={() => setManifestOpen(false)}
-          onApply={(i) =>
-            recompute(
-              i,
-              bag,
-              { ...defaultPreferences, route: 1 },
-              'Company manifest imported. Quantities expanded; supplied measurements are authoritative.',
-            )
-          }
+          onApply={acceptCargo}
         />
       )}
       {photoOpen && (
@@ -1105,14 +1368,8 @@ export default function Planner() {
           asset={bag}
           available={api.available}
           onClose={() => setPhotoOpen(false)}
-          onApply={(i) =>
-            recompute(
-              mergePhotoCargo(items, i),
-              bag,
-              prefs,
-              'Reviewed AI cargo added. Existing manifest IDs and asset measurements were preserved.',
-            )
-          }
+          items={items}
+          onApply={(i) => acceptCargo(mergePhotoCargo(items, i))}
         />
       )}
       <Dialog open={info} onOpenChange={setInfo}>

@@ -11,6 +11,7 @@ export default function Scene({
   exploded,
   step,
   moved,
+  showEngineering = true,
 }: {
   plan: Plan;
   selected: string | null;
@@ -18,6 +19,7 @@ export default function Scene({
   exploded: boolean;
   step: number;
   moved: string[];
+  showEngineering?: boolean;
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<THREE.Vector3 | null>(null);
@@ -249,7 +251,11 @@ export default function Scene({
       scene.add(group);
       anim.push({ mesh: group, target, start });
     }
-    if (plan.placements.length && step >= plan.placements.length) {
+    if (
+      showEngineering &&
+      plan.placements.length &&
+      step >= plan.placements.length
+    ) {
       const c = plan.metrics.com;
       const point = new THREE.Vector3(c[0] - w / 2, c[1], c[2] - d / 2);
       const ball = new THREE.Mesh(
@@ -363,7 +369,7 @@ export default function Scene({
       renderer.dispose();
       el.removeChild(renderer.domElement);
     };
-  }, [plan, selected, exploded, step, moved, onSelect]);
+  }, [plan, selected, exploded, step, moved, onSelect, showEngineering]);
   return (
     <div className="scene" ref={host}>
       {failed && (

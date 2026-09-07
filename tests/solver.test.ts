@@ -116,7 +116,7 @@ test('opening gate catches an object that fits the interior', () => {
     opening: [15, 15],
   });
   assert.equal(p.placements.length, 0);
-  assert.match(p.unpacked[0].reason, /Opening/);
+  assert.match(p.unpacked[0].reason, /doors/);
 });
 test('weight limit and required-first selection', () => {
   const items = [
@@ -128,7 +128,7 @@ test('weight limit and required-first selection', () => {
     p.placements.map((p) => p.item.id),
     ['required'],
   );
-  assert.match(p.unpacked[0].reason, /Weight/);
+  assert.match(p.unpacked[0].reason, /Too heavy/);
 });
 test('load from a three-level stack propagates to bottom support', () => {
   const bottom: Placement = {

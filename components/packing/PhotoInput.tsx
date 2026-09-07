@@ -1,27 +1,33 @@
 'use client';
 import { useState } from 'react';
 import Image from 'next/image';
-import { Camera, Upload, LoaderCircle } from 'lucide-react';
+import { Camera, LoaderCircle } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
-import { photoPalette, perceptionSchema } from '@/lib/astra/schemas';
-import type { Perception } from '@/lib/astra/schemas';
 import type { Item, Container } from '@/lib/packing/model';
-import { validateModel } from '@/lib/packing/model';
-
+import {
+  captureSchema,
+  captureCargo,
+  type CaptureResult,
+} from '@/lib/astra/capture';
 async function prepare(file: File) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type))
-    throw new Error('Choose a JPEG, PNG, or WebP photo.');
+    throw new Error('Choose a JPEG, PNG or WebP photo.');
   if (file.size > 15 * 1024 * 1024)
     throw new Error('Choose a photo smaller than 15 MB.');
-  const bitmap = await createImageBitmap(file),
-    canvas = document.createElement('canvas');
-  const scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height));
+  const bitmap = await createImageBitmap(file);
+  if (Math.min(bitmap.width, bitmap.height) < 320) {
+    bitmap.close();
+    throw new Error(
+      'This photo is too small to see cargo edges. Retake it at a higher resolution.',
+    );
+  }
+  const canvas = document.createElement('canvas'),
+    scale = Math.min(1, 1400 / Math.max(bitmap.width, bitmap.height));
   canvas.width = Math.round(bitmap.width * scale);
   canvas.height = Math.round(bitmap.height * scale);
   const ctx = canvas.getContext('2d')!;
@@ -33,106 +39,166 @@ async function prepare(file: File) {
 }
 export default function PhotoInput({
   available,
-  asset,
+  items,
   onClose,
   onApply,
 }: {
   available: boolean;
   asset: Container;
+  items: Item[];
   onClose: () => void;
-  onApply: (items: Item[], bag: Container) => void;
+  onApply: (items: Item[]) => void;
 }) {
-  const [photos, setPhotos] = useState<{ container?: string; items?: string }>(
-      {},
-    ),
+  const [mode, setMode] = useState<'single' | 'batch'>('single'),
+    [photos, setPhotos] = useState<{ items?: string; side?: string }>({}),
+    [quantity, setQuantity] = useState(1),
     [reference, setReference] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
-    [result, setResult] = useState<Perception | null>(null),
-    [reviewed, setReviewed] = useState(false);
-  const [measured, setMeasured] = useState<string[]>([]);
-  const analyze = async () => {
+    [result, setResult] = useState<CaptureResult | null>(null),
+    [showSide, setShowSide] = useState(false);
+  async function analyze() {
     setBusy(true);
     setError('');
+    setResult(null);
     try {
-      const response = await fetch('/api/astra', {
+      const r = await fetch('/api/astra', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          action: 'perceive',
+          action: 'capture',
+          mode,
           reference,
           images: Object.entries(photos).map(([role, data]) => ({
             role,
             data,
           })),
+          items: items.map(({ id, name }) => ({ id, name })),
         }),
       });
-      const body = (await response.json()) as {
-        error?: string;
-        result: unknown;
-      };
-      if (!response.ok) throw new Error(body.error || 'Photo analysis failed.');
-      setResult(perceptionSchema.parse(body.result));
-      setReviewed(false);
-      setMeasured([]);
+      const b = (await r.json()) as { error?: string; result: unknown };
+      if (!r.ok) throw new Error(b.error || 'The photo could not be checked.');
+      const parsed = captureSchema.parse(b.result);
+      if (mode === 'single' && parsed.items.length > 1)
+        throw new Error(
+          'Several units were identified. Switch to Batch, or retake a photo of one unit.',
+        );
+      setResult(parsed);
+      if (parsed.secondViewRequired) setShowSide(true);
     } catch (e) {
-      setError(
-        e instanceof Error ? e.message : 'Could not analyze the photos.',
-      );
+      setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  };
-  const apply = () => {
-    if (!result) return;
-    const items: Item[] = result.items.map((i, k) => ({
-      ...i,
-      dims: i.dims as [number, number, number],
-      color: photoPalette[k % photoPalette.length],
-      source: 'astra_estimate',
-      stackable: i.maxTopLoad > 0,
-      deliveryStop: 1,
-      destination: 'Unassigned — review',
-      provenance: {
-        dims: measured.includes(i.id) ? 'manual' : 'astra_estimate',
-        mass: 'astra_estimate',
-        handling: 'astra_estimate',
-      },
-    }));
-    const container: Container = {
-      ...result.container,
-      kind: 'truck',
-      loading: 'rear',
-      expansion: 0,
-      dims: result.container.dims as [number, number, number],
-      opening: result.container.opening as [number, number],
-    };
-    const errors = validateModel(items, asset);
-    if (errors.length) {
-      setError(errors.join(' '));
-      return;
-    }
-    onApply(items, container);
-  };
+  }
   return (
-    <Dialog open onOpenChange={(open) => !busy && !open && onClose()}>
+    <Dialog open onOpenChange={(o) => !busy && !o && onClose()}>
       <DialogContent className="photo-dialog">
-        <DialogTitle>Astra cargo understanding</DialogTitle>
+        <DialogTitle>Scan cargo</DialogTitle>
         <DialogDescription>
-          Photograph cargo labels and the rear opening. A ruler or a known
-          dimension helps. Photos are sent to OpenAI only when you select
-          Analyze.
+          Capture a useful view, then check only the measurements that need your
+          attention.
         </DialogDescription>
+        <fieldset className="scan-modes" aria-label="Scan mode">
+          <button
+            disabled={busy}
+            aria-pressed={mode === 'single'}
+            onClick={() => {
+              setMode('single');
+              setResult(null);
+            }}
+          >
+            Single cargo + quantity
+          </button>
+          <button
+            disabled={busy}
+            aria-pressed={mode === 'batch'}
+            onClick={() => {
+              setMode('batch');
+              setQuantity(1);
+              setResult(null);
+            }}
+          >
+            Batch · different cargo
+          </button>
+        </fieldset>
+        <div className="capture-guide">
+          <figure className="capture-diagram">
+            <svg
+              viewBox="0 0 400 170"
+              aria-label="Put the marker flat against the cargo front, keeping the whole cargo visible"
+            >
+              <rect
+                x="55"
+                y="15"
+                width="210"
+                height="135"
+                fill="#f0f4f5"
+                stroke="#526b78"
+                strokeWidth="2"
+              />
+              <text x="80" y="45" fill="#173746" fontSize="15">
+                Cargo front
+              </text>
+              <rect
+                x="73"
+                y="78"
+                width="55"
+                height="55"
+                fill="white"
+                stroke="#102c3b"
+                strokeWidth="6"
+              />
+              <path d="M135 105H285" stroke="#526b78" />
+              <text x="290" y="99" fill="#173746" fontSize="13">
+                20 cm
+              </text>
+              <text x="290" y="120" fill="#173746" fontSize="13">
+                marker
+              </text>
+            </svg>
+            <figcaption>
+              Place the marker flat against the front. Step slightly to one side
+              so the photo also shows the cargo depth.
+            </figcaption>
+          </figure>
+          <ol>
+            <li>
+              Show the whole{' '}
+              {mode === 'batch'
+                ? 'group, with space between units'
+                : 'unit, including its pallet'}
+              .
+            </li>
+            <li>
+              Place the <strong>20 cm scan marker</strong> beside it, on the
+              same plane.
+            </li>
+            <li>
+              Use an angled view showing the front and side. Keep edges clear
+              and labels readable.
+            </li>
+          </ol>
+          <a href="/cargo-scan-marker.html" target="_blank" rel="noreferrer">
+            Open printable 20 cm marker
+          </a>
+          <p>
+            Print at 100% and check the outer square with a ruler. Photo
+            dimensions are approximate.
+          </p>
+        </div>
         {!available && (
-          <div className="notice">
-            Runtime Astra is not connected. You can preview photos here; use the
-            sample manifest or cargo editor until a server API key is
-            configured.
-          </div>
+          <p className="notice">
+            Photo analysis is unavailable until runtime AI is connected. You can
+            prepare photos here, or close this window and use Import manifest or
+            Add manually.
+          </p>
         )}
         <div className="photo-grid">
-          {(['container', 'items'] as const).map((role) => (
-            <label className="upload-box" key={role}>
+          {(
+            ['items', ...(showSide ? ['side'] : [])] as ('items' | 'side')[]
+          ).map((role) => (
+            <label className="upload-box scan-frame" key={role}>
               {photos[role] ? (
                 <Image
                   src={photos[role]!}
@@ -140,22 +206,30 @@ export default function PhotoInput({
                   height={480}
                   unoptimized
                   alt={
-                    role === 'container'
-                      ? 'Selected transport asset'
-                      : 'Selected cargo units'
+                    role === 'items'
+                      ? 'Selected cargo front and angled view'
+                      : 'Selected cargo side view'
                   }
                 />
               ) : (
-                <Camera size={32} />
+                <Camera size={34} />
               )}
               <strong>
-                {role === 'container' ? 'Transport asset' : 'Cargo units'}
+                {role === 'items' ? 'Front & angled view' : 'Side view'}
               </strong>
-              <span>Choose photo</span>
+              <span>
+                {photos[role]
+                  ? 'Retake or choose another photo'
+                  : 'Take photo or choose from device'}
+              </span>
+              <small>
+                Full cargo visible · marker visible · minimal overlap
+              </small>
               <input
-                aria-label={`${role} photo`}
                 type="file"
+                capture="environment"
                 accept="image/jpeg,image/png,image/webp"
+                aria-label={role === 'items' ? 'Cargo photo' : 'Side photo'}
                 disabled={busy}
                 onChange={async (e) => {
                   const f = e.target.files?.[0];
@@ -173,26 +247,61 @@ export default function PhotoInput({
             </label>
           ))}
         </div>
-        <label className="field">
-          Known measurements or reference
-          <textarea
-            maxLength={1500}
-            value={reference}
-            onChange={(e) => setReference(e.target.value)}
-            placeholder="The truck interior is 240 × 240 × 600 cm. Manifest weight for P14 is 230 kg."
-          />
-        </label>
+        {!showSide && (
+          <button
+            className="text-button"
+            disabled={busy}
+            onClick={() => setShowSide(true)}
+          >
+            Add an optional side view for irregular cargo
+          </button>
+        )}
+        {mode === 'single' && (
+          <label className="field">
+            Quantity · identical units
+            <input
+              type="number"
+              value={quantity}
+              min={1}
+              max={30}
+              disabled={busy}
+              onChange={(e) => setQuantity(Number(e.target.value))}
+            />
+          </label>
+        )}
+        <details className="form-more">
+          <summary>Add known measurements or label details</summary>
+          <label className="field">
+            Known cargo facts
+            <textarea
+              maxLength={1500}
+              disabled={busy}
+              value={reference}
+              onChange={(e) => {
+                setReference(e.target.value);
+                setResult(null);
+              }}
+              placeholder="Crate C04 weighs 105 kg, including the pallet."
+            />
+          </label>
+        </details>
+        <p className="small muted">
+          Photos are sent to OpenAI only when you select Check photo. This app
+          does not save them. Up to 30 cargo units per load.
+        </p>
         <button
           className="primary"
-          disabled={busy || !available || !photos.items}
-          onClick={analyze}
+          disabled={!available || busy || !photos.items}
+          onClick={() => void analyze()}
         >
           {busy ? (
             <LoaderCircle className="spin" size={18} />
           ) : (
-            <Upload size={18} />
+            <Camera size={18} />
           )}{' '}
-          {busy ? 'Astra is reviewing the photos…' : 'Analyze with Astra'}
+          {busy
+            ? 'Checking visibility and cargo…'
+            : 'Check photo & identify cargo'}
         </button>
         {error && (
           <p role="alert" className="error">
@@ -200,76 +309,62 @@ export default function PhotoInput({
           </p>
         )}
         {result && (
-          <div className="photo-result">
-            <p className="eyebrow">OBSERVED</p>
-            <p>{result.observed}</p>
-            <p className="notice">{result.uncertainty}</p>
-            <div className="estimate-list">
-              {result.items.map((i, k) => (
-                <div key={i.id}>
-                  <strong>{i.name}</strong>
+          <section className="photo-result" aria-live="polite">
+            <h3>
+              {result.quality === 'retake'
+                ? 'Retake recommended'
+                : result.secondViewRequired
+                  ? 'A side view is needed'
+                  : 'Capture checked'}
+            </h3>
+            <p>{result.guidance}</p>
+            {result.secondViewRequired && (
+              <p>
+                Move approximately to the side and take another photo above.
+              </p>
+            )}
+            {!result.markerVisible && (
+              <p className="notice">
+                The marker was not usable. Dimensions will be marked Required;
+                you can enter measured values.
+              </p>
+            )}
+            <ul className="capture-results">
+              {result.items.map((i) => (
+                <li key={i.id}>
+                  <strong>
+                    {i.id} · {i.name}
+                  </strong>
                   <span>
-                    {i.dims.join(' × ')} cm · {i.mass} kg ·{' '}
-                    {Math.round(i.confidence * 100)}% confidence
+                    {result.markerVisible && i.dims
+                      ? `${i.dims.join(' × ')} cm · check estimate`
+                      : 'Dimensions required'}{' '}
+                    ·{' '}
+                    {i.mass ? `${i.mass} kg · check label` : 'Weight required'}
                   </span>
-                  <div className="dimension-fields">
-                    {i.dims.map((n, axis) => (
-                      <label className="field" key={axis}>
-                        {['Width', 'Height', 'Length'][axis]}
-                        <input
-                          type="number"
-                          min={0.1}
-                          max={2000}
-                          value={n}
-                          onChange={(e) => {
-                            setMeasured((ids) => [...new Set([...ids, i.id])]);
-                            setReviewed(false);
-                            setResult((r) =>
-                              r
-                                ? {
-                                    ...r,
-                                    items: r.items.map((it, j) =>
-                                      j === k
-                                        ? {
-                                            ...it,
-                                            dims: it.dims.map((x, a) =>
-                                              a === axis
-                                                ? Number(e.target.value)
-                                                : x,
-                                            ) as [number, number, number],
-                                          }
-                                        : it,
-                                    ),
-                                  }
-                                : r,
-                            );
-                          }}
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </div>
+                  <small>{i.notes}</small>
+                </li>
               ))}
-            </div>
-            <p className="small muted">
-              Asset suggestion: {result.container.dims.join(' × ')} cm; opening{' '}
-              {result.container.opening.join(' × ')} cm;{' '}
-              {result.container.maxMass} kg limit. Existing asset measurements
-              and cargo IDs are retained. New IDs are added after review.
-            </p>
-            <label className="check-field" htmlFor="photo-review">
-              <Checkbox
-                id="photo-review"
-                checked={reviewed}
-                onCheckedChange={setReviewed}
-              />{' '}
-              I reviewed these estimates and will verify inferred dimensions and
-              load limits before physical loading.
-            </label>
-            <button className="primary" disabled={!reviewed} onClick={apply}>
-              Use reviewed estimates
-            </button>
-          </div>
+            </ul>
+            {result.quality === 'good' &&
+              !result.secondViewRequired &&
+              result.items.length > 0 && (
+                <button
+                  className="primary"
+                  onClick={() => {
+                    try {
+                      onApply(
+                        captureCargo(result, mode === 'single' ? quantity : 1),
+                      );
+                    } catch (e) {
+                      setError((e as Error).message);
+                    }
+                  }}
+                >
+                  Add to cargo check
+                </button>
+              )}
+          </section>
         )}
       </DialogContent>
     </Dialog>

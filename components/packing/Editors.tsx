@@ -272,7 +272,7 @@ export function ItemEditor({
             Remove cargo
           </button>
           <button className="primary" onClick={save}>
-            Save & recompute
+            Save cargo
           </button>
         </div>
       </DialogContent>
@@ -370,7 +370,7 @@ export function BagEditor({
             else onSave(draft);
           }}
         >
-          Save & recompute
+          Save transport
         </button>
       </DialogContent>
     </Dialog>

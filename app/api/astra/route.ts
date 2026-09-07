@@ -1,6 +1,11 @@
 import { env } from 'cloudflare:workers';
 import { z } from 'zod';
-import { perceive, interpret, interpretCargo } from '@/lib/astra/client';
+import {
+  perceive,
+  interpret,
+  interpretCargo,
+  captureCargoPhoto,
+} from '@/lib/astra/client';
 const runtime = () => {
   const e = env as Record<string, string | undefined>;
   return {
@@ -9,13 +14,22 @@ const runtime = () => {
   };
 };
 const image = z.object({
-  role: z.enum(['container', 'items']),
+  role: z.enum(['container', 'items', 'side']),
   data: z
     .string()
     .max(4500000)
     .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/),
 });
 const bodySchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('capture'),
+    images: z.array(image).min(1).max(2),
+    reference: z.string().max(1500),
+    mode: z.enum(['single', 'batch']),
+    items: z
+      .array(z.object({ id: z.string().max(40), name: z.string().max(80) }))
+      .max(30),
+  }),
   z.object({
     action: z.literal('perceive'),
     images: z.array(image).min(1).max(2),
@@ -102,11 +116,19 @@ export async function POST(request: Request) {
       );
     const b = parsed.data;
     const result =
-      b.action === 'perceive'
-        ? await perceive(config, b.images, b.reference)
-        : b.action === 'cargo-intent'
-          ? await interpretCargo(config, b.text, b.items)
-          : await interpret(config, b.text, b.items);
+      b.action === 'capture'
+        ? await captureCargoPhoto(
+            config,
+            b.images,
+            b.reference,
+            b.mode,
+            b.items,
+          )
+        : b.action === 'perceive'
+          ? await perceive(config, b.images, b.reference)
+          : b.action === 'cargo-intent'
+            ? await interpretCargo(config, b.text, b.items)
+            : await interpret(config, b.text, b.items);
     return Response.json(
       { result, provider: 'astra', model: config.model },
       { headers: { 'Cache-Control': 'no-store' } },

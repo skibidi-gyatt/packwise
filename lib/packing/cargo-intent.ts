@@ -9,6 +9,7 @@ export const cargoIntentSchema = z.object({
         first: z.boolean().nullable(),
         stop: z.number().int().min(1).max(20).nullable(),
         noStack: z.boolean().nullable(),
+        upright: z.boolean().nullable().default(null),
         remove: z.boolean(),
       }),
     )
@@ -33,8 +34,7 @@ export function cargoOfflineIntent(text: string, items: Item[]): CargoIntent {
   };
   if (/^(prioritize|improve) balance[.!]?$/i.test(t)) {
     p.balance = true;
-    p.explanation =
-      'Increase the weight of lateral and longitudinal centre-of-mass balance.';
+    p.explanation = 'Spread the cargo weight more evenly across the truck.';
     return p;
   }
   if (
@@ -43,8 +43,7 @@ export function cargoOfflineIntent(text: string, items: Item[]): CargoIntent {
     )
   ) {
     p.route = true;
-    p.explanation =
-      'Increase the penalty for cargo blocked by later-stop shipments.';
+    p.explanation = 'Make earlier deliveries easier to reach.';
     return p;
   }
   if (matched.length !== 1)
@@ -52,6 +51,24 @@ export function cargoOfflineIntent(text: string, items: Item[]): CargoIntent {
       'Name one cargo ID, for example “P14 must be unloaded first”, or use a suggestion below.',
     );
   const id = matched[0].id;
+  if (
+    /^(keep .+ upright|do not turn .+ sideways|don't turn .+ sideways)[.!]?$/i.test(
+      t,
+    )
+  ) {
+    p.changes = [
+      {
+        id,
+        first: null,
+        stop: null,
+        noStack: null,
+        upright: true,
+        remove: false,
+      },
+    ];
+    p.explanation = `${id}: keep this side up when loading.`;
+    return p;
+  }
   if (
     /\b(no|not|never|except)\b/i.test(t) &&
     !/^do not stack anything on /i.test(t) &&
@@ -61,16 +78,43 @@ export function cargoOfflineIntent(text: string, items: Item[]): CargoIntent {
       'This request needs live Astra or a manual constraint edit. Offline mode does not infer exceptions.',
     );
   if (/\b(unload(?:ed)? first|first to unload)\b/i.test(t)) {
-    p.changes = [{ id, first: true, stop: null, noStack: true, remove: false }];
-    p.explanation = `${id}: first to unload, no top loading; destination and delivery stop retained. A clear rear extraction path becomes a hard constraint.`;
+    p.changes = [
+      {
+        id,
+        first: true,
+        stop: null,
+        noStack: true,
+        upright: null,
+        remove: false,
+      },
+    ];
+    p.explanation = `${id}: keep the path to the rear doors clear and put nothing on top, so it can come out first.`;
   } else if (
     /^do not stack anything on /i.test(t) ||
     /^no stacking on /i.test(t)
   ) {
-    p.changes = [{ id, first: null, stop: null, noStack: true, remove: false }];
-    p.explanation = `${id}: no cargo above; maximum supported top load becomes zero.`;
+    p.changes = [
+      {
+        id,
+        first: null,
+        stop: null,
+        noStack: true,
+        upright: null,
+        remove: false,
+      },
+    ];
+    p.explanation = `${id}: put nothing on top.`;
   } else if (/^remove /i.test(t)) {
-    p.changes = [{ id, first: null, stop: null, noStack: null, remove: true }];
+    p.changes = [
+      {
+        id,
+        first: null,
+        stop: null,
+        noStack: null,
+        upright: null,
+        remove: true,
+      },
+    ];
     p.explanation = `Remove ${id} from this load and recompute the remaining manifest.`;
   } else
     throw new Error(
@@ -114,7 +158,13 @@ export function applyCargoIntent(
           handling: 'manual',
         },
         mustUnloadFirst: c.first ?? base.mustUnloadFirst,
-        access: c.first ? ('immediate' as const) : base.access,
+        access:
+          c.first === null
+            ? base.access
+            : c.first
+              ? ('immediate' as const)
+              : ('normal' as const),
+        orientation: c.upright ? 'upright' : i.orientation,
         stackable: c.noStack === null ? i.stackable : !c.noStack,
         maxTopLoad: c.noStack ? 0 : i.maxTopLoad,
       },

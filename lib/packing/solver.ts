@@ -381,14 +381,14 @@ function placeScore(
 }
 function failure(i: Item, bag: Container, mass: number): string {
   if (mass + i.mass > bag.maxMass + EPS)
-    return `Weight limit: ${i.mass.toFixed(2)} kg would exceed ${bag.maxMass} kg. Remove an item or raise a verified limit.`;
+    return `Too heavy for this load. Adding ${i.mass.toFixed(2)} kg would exceed the ${bag.maxMass} kg capacity. Set this unit aside or choose a vehicle with enough capacity.`;
   const rs = rotations(i);
   if (!rs.some((r) => doorFits(r.dims, bag)))
-    return 'Opening too small for an allowed orientation. Verify the door measurement or assign a larger transport asset.';
+    return 'This unit cannot pass through the doors in an allowed position. Check its measurements or choose a vehicle with a larger opening.';
   if (!rs.some((r) => r.dims.every((x, k) => x <= bag.dims[k] + EPS)))
-    return 'Dimensions exceed the allowed envelope. Reduce a soft item or use a larger container.';
+    return 'This unit is larger than the available space. Check its measurements or choose a larger vehicle.';
   return bag.loading === 'rear'
-    ? 'No feasible placement found with the current door path, support, stacking and unloading constraints. Review dimensions or assign this unit to a later load. This is a bounded search, not proof of impossibility.'
+    ? 'No suitable position found in this search. Keep this unit out of the load for now. Check its size and stacking rules, or plan it in a later load.'
     : 'No supported, load-safe insertion found in this search. Try fewer items, verify dimensions, or allow more depth expansion.';
 }
 function run(
@@ -531,7 +531,13 @@ export function instruction(p: Placement, plan: Plan): string {
         Math.abs(end(q, 1) - p.pos[1]) < EPS &&
         contactArea(p, q) > EPS,
     );
-    return `Load ${p.item.id} ${zone}, ${p.pos[1] < EPS ? 'on the floor' : `on ${supports.map((q) => q.item.id).join(' + ')}`}. ${p.item.orientation !== 'any' ? 'Keep upright. ' : ''}${p.item.stackable === false ? 'No cargo above. ' : ''}Stop ${p.item.deliveryStop ?? 1}: ${p.item.destination ?? 'delivery'}.${p.item.mustUnloadFirst ? ' First to unload; clear extraction path required.' : ''}`;
+    const lateral =
+      p.pos[0] + p.dims[0] / 2 < plan.container.dims[0] * 0.4
+        ? 'left side'
+        : p.pos[0] + p.dims[0] / 2 > plan.container.dims[0] * 0.6
+          ? 'right side'
+          : 'across the centre';
+    return `Load ${p.item.id} ${zone}, ${lateral}, ${p.pos[1] < EPS ? 'on the floor' : `on ${supports.map((q) => q.item.id).join(' + ')}`}. ${p.item.orientation === 'upright' ? 'Keep upright. ' : p.item.orientation === 'flat' ? 'Keep flat. ' : ''}${p.item.stackable === false ? 'No cargo above. ' : ''}Stop ${p.item.deliveryStop ?? 1}: ${p.item.destination ?? 'delivery'}.${p.item.mustUnloadFirst ? ' First to unload; clear extraction path required.' : ''}`;
   }
   const [w, h, d] = plan.container.dims;
   const zone =

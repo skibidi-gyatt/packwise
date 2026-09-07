@@ -15,6 +15,9 @@ export type Item = {
   source: 'sample' | 'astra_estimate' | 'manual' | 'manifest';
   confidence: number;
   notes: string;
+  quantityGroup?: string;
+  reviewed?: Partial<Record<'dims' | 'mass' | 'handling', boolean>>;
+  fieldConfidence?: Partial<Record<'dims' | 'mass' | 'handling', number>>;
   destination?: string;
   deliveryStop?: number;
   stackable?: boolean;

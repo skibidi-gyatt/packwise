@@ -72,8 +72,40 @@ export const manifestText = (items: Item[]) =>
     null,
     2,
   );
-// Existing IDs retain every authoritative property. AI adds only new reviewed units.
+// Photos fill missing measurements only; existing valid company/operator values win.
 export function mergePhotoCargo(existing: Item[], estimates: Item[]) {
-  const ids = new Set(existing.map((i) => i.id));
-  return [...existing, ...estimates.filter((i) => !ids.has(i.id))];
+  const ids = new Set(existing.map((i) => i.id.toLowerCase()));
+  return [
+    ...existing.map((i) => {
+      const e = estimates.find(
+        (e) => e.id.toLowerCase() === i.id.toLowerCase(),
+      );
+      if (!e) return i;
+      const dimsMissing = i.dims.some((n) => !Number.isFinite(n) || n <= 0),
+        massMissing = !Number.isFinite(i.mass) || i.mass <= 0;
+      if (!dimsMissing && !massMissing) return i;
+      return {
+        ...i,
+        dims: dimsMissing
+          ? (i.dims.map((n, k) => (n > 0 ? n : e.dims[k])) as Item['dims'])
+          : i.dims,
+        mass: massMissing ? e.mass : i.mass,
+        provenance: {
+          ...i.provenance,
+          dims: dimsMissing
+            ? 'astra_estimate'
+            : (i.provenance?.dims ?? i.source),
+          mass: massMissing
+            ? 'astra_estimate'
+            : (i.provenance?.mass ?? i.source),
+        },
+        reviewed: {
+          ...i.reviewed,
+          dims: dimsMissing ? false : i.reviewed?.dims,
+          mass: massMissing ? false : i.reviewed?.mass,
+        },
+      };
+    }),
+    ...estimates.filter((i) => !ids.has(i.id.toLowerCase())),
+  ];
 }

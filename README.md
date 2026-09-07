@@ -9,15 +9,15 @@ npm install
 npm run dev
 ```
 
-Open the URL printed by Vinext. The sample manifest, manual editor, optimizer and advertised offline requests need no key. State lives in browser memory; reload restores the demo. Download JSON saves the manifest. Export load plan saves both algorithms, coordinates, constraints and metrics.
+Open the URL printed by Vinext. The sample manifest, manual editor, optimizer and advertised offline requests need no key. Cargo and loading state live in browser memory; reload restores the demo. Saved transport assets persist on this device. Export manifest saves JSON; Export load plan saves both algorithms, coordinates, constraints and metrics.
 
 ## 90-second demo
 
-1. Start with Simple: **14/20 units, 50.5% utilization**.
-2. Select **Optimize load**: **20/20 units, 72.0%, 7,300 kg**. Show the rear door, stop colors and centre of mass. Six more units fit; this does not prove a vehicle was eliminated.
-3. Select P14 and inspect its **2 extraction blockers**. Select **P14 unloads first**, or type “Shipment P14 must be unloaded first.” Inspect the constraint patch, movement and **0 blockers**, while all 20 units remain loaded. Destination and stop are retained; this is a first-extraction override, not route optimization.
-4. Play the loading sequence and Separate layers. Edit cargo weight or door width. A 90 cm door rejects the demo pallets with a reason.
-5. Reset to rehearse again. Import manifest accepts pasted or uploaded JSON and expands quantities into distinct IDs.
+1. Select a saved transport or use the clearly labelled T-07 sample. Start with the 20 ready sample units, or choose Scan cargo, Import manifest, or Add manually. CSV quantities expand into distinct units; missing measurements block optimization.
+2. Select **Optimize load**: **20/20 units in the plan, 72.0%, 7,300 kg**. The operator view shows the 3D result and excluded units. Advanced exposes the simple **14/20, 50.5%** comparison and engineering metrics. Six more units fit; this does not prove a vehicle was eliminated.
+3. Select **P14 unloads first**. All 20 units remain assigned; Advanced shows **2 → 0 extraction blockers**, 7 moved units and the interpreted rule. Destination and stop are retained.
+4. Select **Start loading**. Confirm a unit, return to the plan, then Resume. Previous shows an earlier unit without erasing confirmations. Complete the checklist.
+5. Scan guidance includes a printable 20 cm marker and single/batch modes. Without a runtime API key, use CSV or manual entry. See [operator workflow and validation](docs/OPERATOR_WORKFLOW.md).
 
 ## Optional runtime AI
 
@@ -25,7 +25,7 @@ Copy `.env.example` to `.dev.vars`, set `OPENAI_API_KEY` and `ASTRA_MODEL`, and 
 
 Configured status does not mean a live call succeeded. Without a key, clearly labelled offline rules support first unload, no stacking, removal of one ID, balance and delivery-order preferences. Photo analysis stays disabled. Runtime failures preserve the current plan.
 
-Photos are resized locally, sent only on Analyze, and not stored by this app; requests use `store:false`. New inferred cargo requires review. Existing manifest IDs and asset measurements survive photo import unchanged. Manual measurements take precedence. Inferred mass and load limits are not certified measurements.
+Photos are resized locally, sent only on Check photo, and not stored by this app; requests use `store:false`. Critical inferred measurements need checking. Scans fill gaps in matching cargo while preserving known measurements and transport ratings. Missing marker or weight data remains Required. The marker is an approximate visual scale reference, not calibrated computer vision. Live scan accuracy has not been tested.
 
 ## Validation
 
