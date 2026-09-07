@@ -36,6 +36,7 @@ export type Container = {
   maxMass: number;
   expansion: number;
   kind?: 'truck' | 'container' | 'other';
+  measurementSource?: 'demo_estimate';
   loading?: 'rear' | 'top';
   floorLimitKgM2?: number;
 };

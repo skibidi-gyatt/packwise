@@ -59,7 +59,11 @@ export default function TransportLanding({
   const [photos, setPhotos] = useState<{ container?: string; side?: string }>(
     {},
   );
-  const [reference, setReference] = useState('Packwise 20 cm square marker');
+  const [reference, setReference] = useState('');
+  const [demoEstimate, setDemoEstimate] = useState(true);
+  const [estimateSource, setEstimateSource] = useState<
+    'demo' | 'reference' | null
+  >(null);
   const [available, setAvailable] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [preparing, setPreparing] = useState(false);
@@ -94,7 +98,10 @@ export default function TransportLanding({
     setGuidance('');
     setPhotos({});
     setPhotoMode(false);
-    setEstimated(false);
+    setEstimated(value?.measurementSource === 'demo_estimate');
+    setEstimateSource(
+      value?.measurementSource === 'demo_estimate' ? 'demo' : null,
+    );
     setReviewed(false);
     setPending(null);
     setFields(
@@ -152,6 +159,8 @@ export default function TransportLanding({
         signal: AbortSignal.timeout(70000),
         body: JSON.stringify({
           action: 'transport-capture',
+          estimateMode: demoEstimate ? 'demo' : 'reference',
+          transportKind: kind ?? 'other',
           reference,
           images: Object.entries(photos)
             .filter(([, data]) => data)
@@ -164,7 +173,10 @@ export default function TransportLanding({
           body.error ||
             'Photo estimation failed. Try again or enter measurements below.',
         );
-      const result = usableTransportPhoto(body.result);
+      const result = usableTransportPhoto(
+        body.result,
+        demoEstimate ? 'demo' : 'reference',
+      );
       if (current !== revision.current) return;
       const hasDimensions = [...result.dims, ...result.opening].some(
         (n) => n !== null,
@@ -181,6 +193,7 @@ export default function TransportLanding({
           doorHeight: result.opening[1]?.toFixed(1) ?? '',
         }));
         setEstimated(true);
+        setEstimateSource(demoEstimate ? 'demo' : 'reference');
         setReviewed(false);
       }
     } catch (e) {
@@ -199,6 +212,9 @@ export default function TransportLanding({
     const bag: Container = {
       name: fields.name.trim(),
       kind: kind ?? 'truck',
+      ...(estimateSource === 'demo'
+        ? { measurementSource: 'demo_estimate' as const }
+        : {}),
       loading: 'rear',
       expansion: 0,
       dims: [
@@ -370,9 +386,7 @@ export default function TransportLanding({
               <h2 tabIndex={-1} ref={heading}>
                 Set up your {kind === 'other' ? 'transport' : kind}
               </h2>
-              <p className="tl-muted">
-                Use the empty interior’s usable dimensions.
-              </p>
+              <p className="tl-muted">Set the usable interior dimensions.</p>
               <form onSubmit={submit}>
                 <fieldset disabled={busy || preparing} className="tl-fields">
                   <label className="tl-field">
@@ -402,11 +416,21 @@ export default function TransportLanding({
                   </div>
                   {photoMode && (
                     <div className="tl-photo">
-                      <h3>Photograph the empty space</h3>
+                      <h3>Photograph your transport space</h3>
+                      <label className="tl-check">
+                        <input
+                          type="checkbox"
+                          checked={demoEstimate}
+                          onChange={(e) => setDemoEstimate(e.target.checked)}
+                        />
+                        <span>
+                          Demo estimates — no marker or empty container required
+                        </span>
+                      </label>
                       <p>
-                        Show the floor, ceiling, both walls and the far end.
-                        Include a visible object of known size. An angled second
-                        view helps estimate depth.
+                        {demoEstimate
+                          ? 'Use an interior or exterior photo with recognizable transport structure. Cargo can remain inside. AI will estimate the full interior using visible details and approximate proportions; these are demo assumptions.'
+                          : 'Show the floor, ceiling, both walls and the far end. Include a visible object of known size. An angled second view helps estimate depth.'}
                       </p>
                       <a
                         href="/cargo-scan-marker.html"
@@ -450,12 +474,20 @@ export default function TransportLanding({
                         ))}
                       </div>
                       <label className="tl-field">
-                        <span>Visible reference and its size</span>
+                        <span>
+                          {demoEstimate
+                            ? 'Helpful details (optional)'
+                            : 'Visible reference and its size'}
+                        </span>
                         <input
                           maxLength={1500}
                           value={reference}
                           onChange={(e) => setReference(e.target.value)}
-                          placeholder="For example: a 100 cm ruler on the floor"
+                          placeholder={
+                            demoEstimate
+                              ? 'For example: a 20 ft container, partly loaded'
+                              : 'For example: a 100 cm ruler on the floor'
+                          }
                         />
                       </label>
                       <p className="tl-muted">
@@ -474,7 +506,9 @@ export default function TransportLanding({
                         className="primary"
                         type="button"
                         disabled={
-                          !available || !photos.container || !reference.trim()
+                          !available ||
+                          !photos.container ||
+                          (!demoEstimate && !reference.trim())
                         }
                         onClick={() => void estimate()}
                       >
@@ -487,7 +521,9 @@ export default function TransportLanding({
                           ? 'Estimating dimensions…'
                           : available === null
                             ? 'Checking photo service…'
-                            : 'Estimate dimensions'}
+                            : demoEstimate
+                              ? 'Get demo dimensions'
+                              : 'Estimate dimensions'}
                       </button>
                       {guidance && (
                         <output className="tl-notice">{guidance}</output>
@@ -496,9 +532,11 @@ export default function TransportLanding({
                   )}
                   <div className="tl-group">
                     <h3>
-                      {estimated
-                        ? 'Review estimated dimensions'
-                        : 'Interior dimensions'}
+                      {estimateSource === 'demo'
+                        ? 'Review approximate demo dimensions'
+                        : estimated
+                          ? 'Review estimated dimensions'
+                          : 'Interior dimensions'}
                     </h3>
                     <div className="tl-grid">
                       {measurement('width', 'Width')}
@@ -551,8 +589,9 @@ export default function TransportLanding({
                         onChange={(e) => setReviewed(e.target.checked)}
                       />
                       <span>
-                        I checked the interior and door measurements against the
-                        actual space. Photo estimates are approximate.
+                        {estimateSource === 'demo'
+                          ? 'I reviewed these approximate dimensions for the demo. They are not verified measurements.'
+                          : 'I checked the interior and door measurements against the actual space. Photo estimates are approximate.'}
                       </span>
                     </label>
                   )}

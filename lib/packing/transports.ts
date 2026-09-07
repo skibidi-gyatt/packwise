@@ -38,12 +38,20 @@ export const transportPhotoSchema = z.object({
 });
 export type TransportPhoto = z.infer<typeof transportPhotoSchema>;
 // Unusable or uncalibrated photos never supply metric measurements to the form.
-export function usableTransportPhoto(input: unknown): TransportPhoto {
+export function usableTransportPhoto(
+  input: unknown,
+  mode: 'reference' | 'demo' = 'reference',
+): TransportPhoto {
   const result = transportPhotoSchema.parse(input);
   return result.quality === 'good' &&
-    result.scaleVisible &&
-    !result.secondViewRequired
-    ? result
+    (mode === 'demo' || (result.scaleVisible && !result.secondViewRequired))
+    ? {
+        ...result,
+        confidence:
+          mode === 'demo' && !result.scaleVisible
+            ? Math.min(result.confidence, 0.5)
+            : result.confidence,
+      }
     : { ...result, dims: [null, null, null], opening: [null, null] };
 }
 

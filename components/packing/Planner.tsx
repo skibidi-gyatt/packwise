@@ -655,9 +655,11 @@ export default function Planner({
                 ))}
               </div>
               <span className="synthetic-note">
-                {synthetic
-                  ? 'Synthetic dispatch scenario'
-                  : 'Operator manifest'}
+                {bag.measurementSource === 'demo_estimate'
+                  ? 'Demo dimensions · approximate'
+                  : synthetic
+                    ? 'Synthetic dispatch scenario'
+                    : 'Operator manifest'}
               </span>
             </div>
             {phase === 'plan' && loadingCompleted > 0 && (

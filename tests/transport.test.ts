@@ -60,6 +60,53 @@ void test('photo contract excludes payload and floor ratings and rejects invalid
     usableTransportPhoto({ ...estimate, dims: [-1, 220, 590] }),
   );
 });
+void test('demo mode keeps uncalibrated estimates and optional extra-view advice, but rejects unusable images', () => {
+  const unscaled = {
+    ...estimate,
+    scaleVisible: false,
+    secondViewRequired: true,
+  };
+  const result = usableTransportPhoto(unscaled, 'demo');
+  assert.deepEqual(result.dims, estimate.dims);
+  assert.deepEqual(result.opening, estimate.opening);
+  assert.ok(result.confidence <= 0.5);
+  assert.deepEqual(usableTransportPhoto(unscaled).dims, [null, null, null]);
+  assert.deepEqual(
+    usableTransportPhoto({ ...unscaled, quality: 'retake' }, 'demo').dims,
+    [null, null, null],
+  );
+  assert.equal('maxMass' in result, false);
+});
+void test('demo prompt permits occupied and uncalibrated views and records transport context', async () => {
+  let sent: Record<string, unknown> = {};
+  const transport = (async (_url: unknown, init: RequestInit) => {
+    sent = JSON.parse(init.body as string);
+    return Response.json({
+      status: 'completed',
+      output: [
+        {
+          content: [
+            {
+              type: 'output_text',
+              text: JSON.stringify({ ...estimate, scaleVisible: false }),
+            },
+          ],
+        },
+      ],
+    });
+  }) as typeof fetch;
+  await captureTransportPhoto(
+    { key: 'test', model: 'test' },
+    [{ role: 'container', data: 'data:image/jpeg;base64,AA==' }],
+    '',
+    transport,
+    'demo',
+    'container',
+  );
+  assert.match(String(sent.instructions), /empty interior are NOT required/);
+  assert.match(String(sent.instructions), /Never infer weight/);
+  assert.match(JSON.stringify(sent.input), /transportKind/);
+});
 void test('photo request uses calibrated interior-only structured output', async () => {
   let sent: Record<string, unknown> = {};
   const transport = (async (_url: unknown, init: RequestInit) => {

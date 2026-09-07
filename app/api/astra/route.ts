@@ -25,7 +25,9 @@ const bodySchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('transport-capture'),
     images: z.array(image).min(1).max(2),
-    reference: z.string().min(1).max(1500),
+    reference: z.string().max(1500),
+    estimateMode: z.enum(['reference', 'demo']).default('reference'),
+    transportKind: z.enum(['truck', 'container', 'other']).default('other'),
   }),
   z.object({
     action: z.literal('capture'),
@@ -131,7 +133,14 @@ export async function POST(request: Request) {
             b.items,
           )
         : b.action === 'transport-capture'
-          ? await captureTransportPhoto(config, b.images, b.reference)
+          ? await captureTransportPhoto(
+              config,
+              b.images,
+              b.reference,
+              undefined,
+              b.estimateMode,
+              b.transportKind,
+            )
           : b.action === 'perceive'
             ? await perceive(config, b.images, b.reference)
             : b.action === 'cargo-intent'

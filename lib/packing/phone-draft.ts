@@ -66,6 +66,7 @@ const schema = z.object({
     maxMass: z.number(),
     expansion: z.number(),
     kind: z.enum(['truck', 'container', 'other']).optional(),
+    measurementSource: z.literal('demo_estimate').optional(),
     loading: z.enum(['rear', 'top']).optional(),
     floorLimitKgM2: z.number().optional(),
   }),
