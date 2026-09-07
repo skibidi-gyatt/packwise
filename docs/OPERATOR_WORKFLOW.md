@@ -16,9 +16,9 @@ Cargo and loading state remain in memory in the open page. Reload restores the d
 
 Single capture + quantity and batch capture share guided instructions. A printable 20 cm square is available at `/cargo-scan-marker.html`. Print at actual size and verify its outer border with a ruler. This is a visual scale reference, not an ArUco decoder or calibrated photogrammetry.
 
-The client checks file type, byte size and minimum resolution, then resizes images. The optional runtime model checks marker visibility, crop, blur, overlap and useful view angle in one structured response. It may request one side view; retake/second-view gates prevent accepting those results. Without a usable marker, estimated dimensions are discarded and marked Required. Weight is requested only from readable labels or supplied facts, never inferred from visual appearance. Returned dimensions and weights still need checking.
+The client checks file type and byte size, then resizes images. Camera and gallery selection are separate controls. Demo estimates are enabled by default for transport and cargo: a recognizable view can yield approximate dimensions without a marker, clear depth edge or empty interior. Returned assumptions are labelled; cargo dimension confidence is capped at 0.5 without a marker. Unrecognizable images still require a retake. Turning off demo mode restores reference-based capture, its minimum-resolution check, marker requirement and second-view gates. Weight is requested only from readable labels or supplied facts, never inferred from visual appearance. Returned dimensions and weights still need checking; transport payload remains manual.
 
-Company values win when a readable scan ID matches existing cargo. A scan can fill a missing dimension axis or weight but cannot replace a known value. Scans do not change transport ratings. Photos are sent only on Check photo; this app does not save them. Live visual accuracy has not been evaluated because no runtime API key is configured.
+Company values win when a readable scan ID matches existing cargo. A scan can fill a missing dimension axis or weight but cannot replace a known value. Scans do not change transport ratings. Photos are sent only on Check photo; this app does not save them. The hosted runtime AI is connected. Its physical measurement accuracy has not been evaluated.
 
 ## Language and expert controls
 
@@ -28,7 +28,7 @@ Advanced retains baseline comparison, extraction blockers, payload distribution,
 
 ## Validation
 
-30 automated tests pass, including eight operator tests for CSV quoting/quantities, missing values, duplicate IDs, capture gates, company-data priority, grouped scans, plain upright instructions and a mocked two-image Responses contract. Existing 22 tests continue to pass; failure-message expectations were updated to the new plain language. Type checking and targeted lint pass.
+46 automated tests pass in the current release, including operator checks for CSV quoting/quantities, missing values, duplicate IDs, capture gates, demo estimates, company-data priority, grouped scans, plain upright instructions and a mocked two-image Responses contract. Type checking, targeted lint and the production build pass.
 
 Actual browser flow: imported two identical CSV units with missing weights; Optimize was disabled. Entered 18 kg once and applied it to the identical group; both became ready. Optimized, confirmed one unit, returned to the plan, resumed at unit 2, viewed Previous without losing the first confirmation, and completed both units. Saved and selected T-07; blank manual entry showed a clear error. Readiness remained visible at 768px portrait tablet width. Independent reviewers also inspected 820px and 768px tablets, manual capture fallback, plan and guided loading.
 

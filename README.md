@@ -1,13 +1,17 @@
 # Packwise Cargo
 
-An enterprise load-planning prototype evolved from Packwise. One truck, 20 synthetic cargo units, three stops, and an operator-request → constraint → deterministic geometry loop. Built with Astra in Codex; runtime AI is optional.
+A cargo load-planning prototype that connects transport setup, photo-assisted cargo entry, natural-language constraints, 3D packing, and guided loading. Built with Astra in Codex; runtime AI is optional.
+
+**[Live demo](https://packwise-field-lab.tangqin918.chatgpt.site/)** · **[Three-member pitch script](docs/HACKATHON_PITCH.md)**
+
+For judges: the supplied scenario has one truck, 20 synthetic cargo units and three stops. All packing, comparison, manual entry and supported offline requests work without an API key. Photos and open-ended language interpretation need a server-side AI connection.
 
 ## Run
 
 For the native iPhone project and Mac installation steps, see [Packwise for iPhone](docs/IPHONE_APP.md).
 
 ```sh
-npm install
+npm ci
 npm run dev
 ```
 
@@ -19,7 +23,7 @@ Open the URL printed by Vinext. The sample manifest, manual editor, optimizer an
 2. Select **Optimize load**: **20/20 units in the plan, 72.0%, 7,300 kg**. The operator view shows the 3D result and excluded units. Advanced exposes the simple **14/20, 50.5%** comparison and engineering metrics. Six more units fit; this does not prove a vehicle was eliminated.
 3. Select **P14 unloads first**. All 20 units remain assigned; Advanced shows **2 → 0 extraction blockers**, 7 moved units and the interpreted rule. Destination and stop are retained.
 4. Select **Start loading**. Confirm a unit, return to the plan, then Resume. Previous shows an earlier unit without erasing confirmations. Complete the checklist.
-5. Scan guidance includes a printable 20 cm marker and single/batch modes. Without a runtime API key, use CSV or manual entry. See [operator workflow and validation](docs/OPERATOR_WORKFLOW.md).
+5. Scan cargo accepts camera or gallery images, with single/batch modes. Demo estimates are enabled by default: recognizable imperfect photos can produce approximate dimensions without a marker. Turn demo mode off for reference-based capture. Without a runtime API key, use CSV or manual entry. See [operator workflow and validation](docs/OPERATOR_WORKFLOW.md).
 
 ## Optional runtime AI
 
@@ -27,7 +31,17 @@ Copy `.env.example` to `.dev.vars`, set `OPENAI_API_KEY` and `ASTRA_MODEL`, and 
 
 Configured status does not mean a live call succeeded. Without a key, clearly labelled offline rules support first unload, no stacking, removal of one ID, balance and delivery-order preferences. Photo analysis stays disabled. Runtime failures preserve the current plan.
 
-Photos are resized locally, sent only on Check photo, and not stored by this app; requests use `store:false`. Critical inferred measurements need checking. Scans fill gaps in matching cargo while preserving known measurements and transport ratings. Missing marker or weight data remains Required. The marker is an approximate visual scale reference, not calibrated computer vision. Live scan accuracy has not been tested.
+Photos are resized locally, sent only on Check photo, and not stored by this app; requests use `store:false`. Critical inferred measurements need checking. Scans fill gaps in matching cargo while preserving known measurements and transport ratings. Demo mode permits approximate transport and cargo dimensions without a marker and labels their assumptions. Reference mode discards uncalibrated dimensions. Missing weight remains Required; the model must not guess it from appearance. Transport maximum payload is entered manually. The marker is an approximate visual scale reference, not calibrated computer vision. Live API connectivity and an unmarked exterior transport response have been exercised; measurement accuracy has not been validated against physical ground truth.
+
+## Architecture
+
+- `components/packing/`: transport landing page, manifest, photo review, 3D planner and guided loading.
+- `lib/astra/` and `app/api/astra/route.ts`: optional server-side image and language interpretation with validated structured responses. API keys stay on the server.
+- `lib/packing/`: deterministic packing heuristics, geometry checks, readiness, import and restricted constraint application.
+- `tests/`: automated geometry, manifest, workflow, persistence and AI-contract checks.
+- `mobile/` and `ios/`: optional earlier iPhone wrapper; the hackathon demo is the website.
+
+The web stack is React, TypeScript, Vinext/Vite, Three.js, Zod and a Cloudflare-compatible Worker. Use Node.js 22.13 or newer. The repository includes a lockfile for reproducible installation. `.openai/hosting.json` identifies the existing live deployment; it is not an API key and does not grant deployment access. Running the source locally does not require ownership of that site.
 
 ## Validation
 
@@ -37,7 +51,7 @@ npm run typecheck
 npm run build
 ```
 
-22 tests cover original behavior and cargo geometry, support, mass conservation, top/floor loads, first extraction, deterministic search, manifest authority, invalid intent and mocked Responses transport. Live API and vision quality are not validated without credentials.
+46 automated tests pass as of 7 September 2026, covering geometry, support, mass conservation, top/floor loads, first extraction, deterministic search, manifest authority, invalid intent, photo demo/reference behavior, mocked Responses transport and optional phone persistence. Type checking and the production build also pass. These checks do not establish real-world vision accuracy or certified loading safety.
 
 ## Scope
 
