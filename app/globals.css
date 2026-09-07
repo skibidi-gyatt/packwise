@@ -786,6 +786,9 @@ h3 {
 }
 .result-explanation p {
   font-size: 13px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  white-space: pre-line;
 }
 .result-explanation strong {
   display: block;
@@ -1173,8 +1176,38 @@ h3 {
   color: #536f7b;
 }
 .photo-result {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
   border-top: 1px solid var(--border);
   padding-top: 15px;
+  overflow-wrap: anywhere;
+}
+.photo-result > p,
+.capture-results li {
+  white-space: pre-line;
+  line-height: 1.65;
+}
+.photo-dialog {
+  grid-template-columns: minmax(0, 1fr);
+  grid-auto-rows: max-content;
+  align-content: start;
+}
+.photo-dialog > * {
+  min-width: 0;
+}
+.photo-dialog .primary,
+.photo-dialog .text-button {
+  max-width: 100%;
+  min-height: 44px;
+  height: auto;
+  white-space: normal;
+  line-height: 1.5;
+  text-align: left;
+}
+.photo-dialog .primary > svg {
+  flex-shrink: 0;
 }
 .photo-result > .primary {
   margin-top: 16px;

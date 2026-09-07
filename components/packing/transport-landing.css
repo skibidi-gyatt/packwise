@@ -365,18 +365,36 @@
   border-radius: 6px;
 }
 .tl-notice {
+  display: block;
+  width: 100%;
+  margin-top: 14px;
   background: var(--muted);
   padding: 12px;
   border-radius: 6px;
   font-size: 14px;
+  line-height: 1.65;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.tl-photo .primary {
+  max-width: 100%;
+  white-space: normal;
+  line-height: 1.5;
+  text-align: left;
+}
+.tl-photo .primary > svg,
+.tl-progress > svg {
+  flex-shrink: 0;
 }
 .tl-progress {
   display: flex;
   gap: 10px;
-  align-items: center;
+  align-items: flex-start;
   color: var(--primary);
   font-size: 14px;
   margin-top: 14px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
 }
 .tl-footer {
   display: flex;
