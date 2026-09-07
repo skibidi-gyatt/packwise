@@ -3,6 +3,7 @@ import { useState } from 'react';
 import Image from 'next/image';
 import { hasNativeFileExporter, saveTextFile } from '@/lib/packing/files';
 import { Camera, LoaderCircle } from 'lucide-react';
+import CargoPhotoResults from './CargoPhotoResults';
 import {
   Dialog,
   DialogContent,
@@ -330,62 +331,16 @@ export default function PhotoInput({
           </p>
         )}
         {result && (
-          <section className="photo-result" aria-live="polite">
-            <h3>
-              {result.quality === 'retake'
-                ? 'Retake recommended'
-                : result.secondViewRequired
-                  ? 'A side view is needed'
-                  : 'Capture checked'}
-            </h3>
-            <p>{result.guidance}</p>
-            {result.secondViewRequired && (
-              <p>
-                Move approximately to the side and take another photo above.
-              </p>
-            )}
-            {!result.markerVisible && (
-              <p className="notice">
-                The marker was not usable. Dimensions will be marked Required;
-                you can enter measured values.
-              </p>
-            )}
-            <ul className="capture-results">
-              {result.items.map((i) => (
-                <li key={i.id}>
-                  <strong>
-                    {i.id} · {i.name}
-                  </strong>
-                  <span>
-                    {result.markerVisible && i.dims
-                      ? `${i.dims.join(' × ')} cm · check estimate`
-                      : 'Dimensions required'}{' '}
-                    ·{' '}
-                    {i.mass ? `${i.mass} kg · check label` : 'Weight required'}
-                  </span>
-                  <small>{i.notes}</small>
-                </li>
-              ))}
-            </ul>
-            {result.quality === 'good' &&
-              !result.secondViewRequired &&
-              result.items.length > 0 && (
-                <button
-                  className="primary"
-                  onClick={() => {
-                    try {
-                      onApply(
-                        captureCargo(result, mode === 'single' ? quantity : 1),
-                      );
-                    } catch (e) {
-                      setError((e as Error).message);
-                    }
-                  }}
-                >
-                  Add to cargo check
-                </button>
-              )}
-          </section>
+          <CargoPhotoResults
+            result={result}
+            onAdd={() => {
+              try {
+                onApply(captureCargo(result, mode === 'single' ? quantity : 1));
+              } catch (e) {
+                setError((e as Error).message);
+              }
+            }}
+          />
         )}
       </DialogContent>
     </Dialog>

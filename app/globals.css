@@ -1190,12 +1190,65 @@ h3 {
   line-height: 1.65;
 }
 .photo-dialog {
-  grid-template-columns: minmax(0, 1fr);
-  grid-auto-rows: max-content;
-  align-content: start;
+  display: block;
+  max-height: 88dvh;
+  overscroll-behavior: contain;
 }
 .photo-dialog > * {
   min-width: 0;
+  max-width: 100%;
+}
+.photo-dialog
+  > :not([data-slot='dialog-close'])
+  + :not([data-slot='dialog-close']) {
+  margin-top: 16px;
+}
+.photo-dialog [data-slot='dialog-title'] {
+  padding-right: 32px;
+}
+.cargo-photo-result .capture-results > li {
+  display: block;
+  min-width: 0;
+  padding: 18px 0;
+}
+.cargo-photo-result h4 {
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.capture-measurements {
+  margin: 12px 0;
+}
+.capture-measurements > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: baseline;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.capture-measurements dt,
+.capture-measurements dd {
+  margin: 0;
+  min-width: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.capture-measurements dd {
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.capture-measurement-note,
+.capture-handling-note {
+  margin-top: 12px;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--muted-foreground);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .photo-dialog .primary,
 .photo-dialog .text-button {
