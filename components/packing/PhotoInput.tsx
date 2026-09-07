@@ -4,6 +4,7 @@ import Image from 'next/image';
 import { hasNativeFileExporter, saveTextFile } from '@/lib/packing/files';
 import { Camera, LoaderCircle } from 'lucide-react';
 import CargoPhotoResults from './CargoPhotoResults';
+import PhotoSourcePicker from './PhotoSourcePicker';
 import {
   Dialog,
   DialogContent,
@@ -220,7 +221,7 @@ export default function PhotoInput({
           {(
             ['items', ...(showSide ? ['side'] : [])] as ('items' | 'side')[]
           ).map((role) => (
-            <label className="upload-box scan-frame" key={role}>
+            <div className="upload-box scan-frame" key={role}>
               {photos[role] ? (
                 <Image
                   src={photos[role]!}
@@ -247,26 +248,23 @@ export default function PhotoInput({
               <small>
                 Full cargo visible · marker visible · minimal overlap
               </small>
-              <input
-                type="file"
-                capture="environment"
-                accept="image/jpeg,image/png,image/webp"
-                aria-label={role === 'items' ? 'Cargo photo' : 'Side photo'}
+              <PhotoSourcePicker
+                label={role === 'items' ? 'Cargo photo' : 'Side photo'}
                 disabled={busy}
-                onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (!f) return;
-                  try {
-                    const data = await prepare(f);
-                    setPhotos((p) => ({ ...p, [role]: data }));
-                    setResult(null);
-                    setError('');
-                  } catch (err) {
-                    setError((err as Error).message);
-                  }
+                onSelect={(f) => {
+                  void (async () => {
+                    try {
+                      const data = await prepare(f);
+                      setPhotos((p) => ({ ...p, [role]: data }));
+                      setResult(null);
+                      setError('');
+                    } catch (err) {
+                      setError((err as Error).message);
+                    }
+                  })();
                 }}
               />
-            </label>
+            </div>
           ))}
         </div>
         {!showSide && (

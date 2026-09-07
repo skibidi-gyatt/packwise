@@ -1903,8 +1903,31 @@ h3 {
   color: #526b78;
   line-height: 1.5;
 }
-.photo-grid:has(> label:only-child) {
+.photo-grid:has(> .scan-frame:only-child) {
   grid-template-columns: 1fr;
+}
+.photo-source-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+.photo-source-picker .quiet-button {
+  flex: 1 1 155px;
+  min-width: 0;
+  min-height: 48px;
+  white-space: normal;
+  line-height: 1.5;
+}
+.photo-source-picker svg {
+  flex-shrink: 0;
+}
+.upload-box:has(.photo-source-picker) {
+  cursor: default;
 }
 .capture-results li {
   display: flex;

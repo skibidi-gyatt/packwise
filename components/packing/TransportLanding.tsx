@@ -22,6 +22,7 @@ import {
   usableTransportPhoto,
 } from '@/lib/packing/transports';
 import { preparePhoto } from '@/lib/packing/prepare-photo';
+import PhotoSourcePicker from './PhotoSourcePicker';
 import './transport-landing.css';
 
 type Fields = {
@@ -50,7 +51,9 @@ export default function TransportLanding({
   onSelect: (b: Container) => void;
 }) {
   const [saved, setSaved] = useState<Container[]>([]);
-  const [kind, setKind] = useState<'truck' | 'container' | 'other' | null>(null);
+  const [kind, setKind] = useState<'truck' | 'container' | 'other' | null>(
+    null,
+  );
   const [fields, setFields] = useState<Fields>(empty);
   const [photoMode, setPhotoMode] = useState(false);
   const [photos, setPhotos] = useState<{ container?: string; side?: string }>(
@@ -406,7 +409,7 @@ export default function TransportLanding({
                         view helps estimate depth.
                       </p>
                       <a
-                        href="/packwise-marker.html"
+                        href="/cargo-scan-marker.html"
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -415,20 +418,20 @@ export default function TransportLanding({
                       </a>
                       <div className="tl-photo-inputs">
                         {(['container', 'side'] as const).map((role) => (
-                          <label key={role}>
+                          <div className="tl-photo-source" key={role}>
                             <span>
                               {role === 'container'
                                 ? 'Interior photo'
                                 : 'Second angle (optional)'}
                             </span>
-                            <input
-                              type="file"
-                              accept="image/jpeg,image/png,image/webp"
-                              capture="environment"
-                              onChange={(e) => {
-                                void photo(e.target.files?.[0], role);
-                                e.target.value = '';
-                              }}
+                            <PhotoSourcePicker
+                              label={
+                                role === 'container'
+                                  ? 'Interior photo'
+                                  : 'Second angle'
+                              }
+                              disabled={busy || preparing}
+                              onSelect={(file) => void photo(file, role)}
                             />
                             {photos[role] && (
                               <Image
@@ -443,7 +446,7 @@ export default function TransportLanding({
                                 unoptimized
                               />
                             )}
-                          </label>
+                          </div>
                         ))}
                       </div>
                       <label className="tl-field">

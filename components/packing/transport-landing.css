@@ -339,7 +339,7 @@
   gap: 18px;
   margin: 18px 0;
 }
-.tl-photo-inputs label {
+.tl-photo-source {
   display: grid;
   gap: 8px;
   font-size: 14px;
