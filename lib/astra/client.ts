@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { intentSchema, perceptionSchema } from './schemas';
 import { cargoIntentSchema } from '../packing/cargo-intent';
 import { captureSchema } from './capture';
+import { responseJsonSchema } from './response-schema';
 import { transportPhotoSchema } from '../packing/transports';
 export async function captureTransportPhoto(
   config: AstraConfig,
@@ -73,7 +74,7 @@ export async function structuredCall<T>(
           type: 'json_schema',
           name: 'packing_response',
           strict: true,
-          schema: z.toJSONSchema(schema, { target: 'draft-7' }),
+          schema: responseJsonSchema(schema),
         },
       },
       max_output_tokens: 7000,
