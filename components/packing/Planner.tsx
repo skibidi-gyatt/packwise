@@ -102,8 +102,7 @@ export default function Planner({
   const [advanced, setAdvanced] = useState(false),
     [expertEdit, setExpertEdit] = useState(false),
     [pickerOpen, setPickerOpen] = useState(false),
-    [hasPlan, setHasPlan] = useState(saved?.hasPlan ?? false),
-    [onlyChecks, setOnlyChecks] = useState(false);
+    [hasPlan, setHasPlan] = useState(saved?.hasPlan ?? false);
   const [allMetrics, setAllMetrics] = useState(false);
   const [items, setItems] = useState(saved?.items ?? seed.items),
     [bag, setBag] = useState(saved?.bag ?? initialTransport ?? seed.bag),
@@ -157,7 +156,6 @@ export default function Planner({
   const loads = useMemo(() => topLoads(shown.placements), [shown]);
   const filtered = items.filter(
     (i) =>
-      (!onlyChecks || cargoCheck(i).status !== 'ready') &&
       (stopFilter === 'all' || String(i.deliveryStop ?? 1) === stopFilter) &&
       `${i.id} ${i.name} ${i.destination}`
         .toLowerCase()
@@ -415,7 +413,6 @@ export default function Planner({
     setExploded(false);
     setPhase('cargo');
     setHasPlan(false);
-    setOnlyChecks(false);
   }
   function download(name: string, data: unknown) {
     void saveTextFile(
@@ -561,27 +558,16 @@ export default function Planner({
               </button>
               <button
                 aria-current={phase === 'cargo' ? 'step' : undefined}
-                onClick={() => {
-                  setPhase('cargo');
-                  setOnlyChecks(false);
-                }}
+                onClick={() => setPhase('cargo')}
               >
                 2 <span>Add cargo</span>
-              </button>
-              <button
-                onClick={() => {
-                  setPhase('cargo');
-                  setOnlyChecks(true);
-                }}
-              >
-                3 <span>Check{checks.length ? ` (${checks.length})` : ''}</span>
               </button>
               <button
                 disabled={!hasPlan}
                 aria-current={phase === 'plan' ? 'step' : undefined}
                 onClick={() => setPhase('plan')}
               >
-                4 <span>Load plan</span>
+                3 <span>Load plan</span>
               </button>
             </nav>
             <div className="planning-heading">
@@ -699,14 +685,9 @@ export default function Planner({
                       : 'Scan cargo, import a manifest or add a unit below.'}
                   </p>
                 </div>
-                <button
-                  className="quiet-button"
-                  onClick={() => setOnlyChecks((v) => !v)}
-                >
-                  {onlyChecks
-                    ? 'Show all cargo'
-                    : `${items.length - checks.length} ready · ${checks.length} to check`}
-                </button>
+                <span className="small muted">
+                  {items.length - checks.length} ready · {checks.length} to check
+                </span>
                 {synthetic && (
                   <button
                     className="text-button"
