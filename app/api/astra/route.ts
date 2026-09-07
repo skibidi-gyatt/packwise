@@ -34,6 +34,7 @@ const bodySchema = z.discriminatedUnion('action', [
     images: z.array(image).min(1).max(2),
     reference: z.string().max(1500),
     mode: z.enum(['single', 'batch']),
+    estimateMode: z.enum(['reference', 'demo']).default('reference'),
     items: z
       .array(z.object({ id: z.string().max(40), name: z.string().max(80) }))
       .max(30),
@@ -131,6 +132,8 @@ export async function POST(request: Request) {
             b.reference,
             b.mode,
             b.items,
+            undefined,
+            b.estimateMode,
           )
         : b.action === 'transport-capture'
           ? await captureTransportPhoto(

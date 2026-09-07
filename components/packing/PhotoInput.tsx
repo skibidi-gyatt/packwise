@@ -17,13 +17,13 @@ import {
   captureCargo,
   type CaptureResult,
 } from '@/lib/astra/capture';
-async function prepare(file: File) {
+async function prepare(file: File, demoEstimate: boolean) {
   if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type))
     throw new Error('Choose a JPEG, PNG or WebP photo.');
   if (file.size > 15 * 1024 * 1024)
     throw new Error('Choose a photo smaller than 15 MB.');
   const bitmap = await createImageBitmap(file);
-  if (Math.min(bitmap.width, bitmap.height) < 320) {
+  if (!demoEstimate && Math.min(bitmap.width, bitmap.height) < 320) {
     bitmap.close();
     throw new Error(
       'This photo is too small to see cargo edges. Retake it at a higher resolution.',
@@ -53,6 +53,7 @@ export default function PhotoInput({
   onApply: (items: Item[]) => void;
 }) {
   const [mode, setMode] = useState<'single' | 'batch'>('single'),
+    [demoEstimate, setDemoEstimate] = useState(true),
     [photos, setPhotos] = useState<{ items?: string; side?: string }>({}),
     [quantity, setQuantity] = useState(1),
     [reference, setReference] = useState(''),
@@ -71,6 +72,7 @@ export default function PhotoInput({
         body: JSON.stringify({
           action: 'capture',
           mode,
+          estimateMode: demoEstimate ? 'demo' : 'reference',
           reference,
           images: Object.entries(photos).map(([role, data]) => ({
             role,
@@ -87,7 +89,7 @@ export default function PhotoInput({
           'Several units were identified. Switch to Batch, or retake a photo of one unit.',
         );
       setResult(parsed);
-      if (parsed.secondViewRequired) setShowSide(true);
+      if (parsed.secondViewRequired && !demoEstimate) setShowSide(true);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -125,91 +127,112 @@ export default function PhotoInput({
             Batch · different cargo
           </button>
         </fieldset>
-        <div className="capture-guide">
-          <figure className="capture-diagram">
-            <svg
-              viewBox="0 0 400 170"
-              aria-label="Put the marker flat against the cargo front, keeping the whole cargo visible"
-            >
-              <rect
-                x="55"
-                y="15"
-                width="210"
-                height="135"
-                fill="#f0f4f5"
-                stroke="#526b78"
-                strokeWidth="2"
-              />
-              <text x="80" y="45" fill="#173746" fontSize="15">
-                Cargo front
-              </text>
-              <rect
-                x="73"
-                y="78"
-                width="55"
-                height="55"
-                fill="white"
-                stroke="#102c3b"
-                strokeWidth="6"
-              />
-              <path d="M135 105H285" stroke="#526b78" />
-              <text x="290" y="99" fill="#173746" fontSize="13">
-                20 cm
-              </text>
-              <text x="290" y="120" fill="#173746" fontSize="13">
-                marker
-              </text>
-            </svg>
-            <figcaption>
-              Place the marker flat against the front. Step slightly to one side
-              so the photo also shows the cargo depth.
-            </figcaption>
-          </figure>
-          <ol>
-            <li>
-              Show the whole{' '}
-              {mode === 'batch'
-                ? 'group, with space between units'
-                : 'unit, including its pallet'}
-              .
-            </li>
-            <li>
-              Place the <strong>20 cm scan marker</strong> beside it, on the
-              same plane.
-            </li>
-            <li>
-              Use an angled view showing the front and side. Keep edges clear
-              and labels readable.
-            </li>
-          </ol>
-          <a
-            href="/cargo-scan-marker.html"
-            target="_blank"
-            rel="noreferrer"
-            onClick={(e) => {
-              if (!hasNativeFileExporter()) return;
-              e.preventDefault();
-              void fetch('/cargo-scan-marker.html')
-                .then((r) => {
-                  if (!r.ok)
-                    throw new Error('The marker file could not be opened.');
-                  return r.text();
-                })
-                .then((t) =>
-                  saveTextFile('cargo-scan-marker.html', t, 'text/html'),
-                )
-                .catch((e) => setError((e as Error).message));
+        <label className="tl-check">
+          <input
+            type="checkbox"
+            checked={demoEstimate}
+            disabled={busy}
+            onChange={(e) => {
+              setDemoEstimate(e.target.checked);
+              setResult(null);
             }}
-          >
-            {hasNativeFileExporter()
-              ? 'Share printable 20 cm marker'
-              : 'Open printable 20 cm marker'}
-          </a>
-          <p>
-            Print at 100% and check the outer square with a ruler. Photo
-            dimensions are approximate.
+          />
+          <span>Demo estimates — no marker required</span>
+        </label>
+        {demoEstimate ? (
+          <p className="notice">
+            Use any recognizable cargo photo, including gallery images,
+            cluttered scenes or imperfect angles. The AI can infer rough
+            dimensions for the demo. Weight still needs a label, scale or your
+            input.
           </p>
-        </div>
+        ) : (
+          <div className="capture-guide">
+            <figure className="capture-diagram">
+              <svg
+                viewBox="0 0 400 170"
+                aria-label="Put the marker flat against the cargo front, keeping the whole cargo visible"
+              >
+                <rect
+                  x="55"
+                  y="15"
+                  width="210"
+                  height="135"
+                  fill="#f0f4f5"
+                  stroke="#526b78"
+                  strokeWidth="2"
+                />
+                <text x="80" y="45" fill="#173746" fontSize="15">
+                  Cargo front
+                </text>
+                <rect
+                  x="73"
+                  y="78"
+                  width="55"
+                  height="55"
+                  fill="white"
+                  stroke="#102c3b"
+                  strokeWidth="6"
+                />
+                <path d="M135 105H285" stroke="#526b78" />
+                <text x="290" y="99" fill="#173746" fontSize="13">
+                  20 cm
+                </text>
+                <text x="290" y="120" fill="#173746" fontSize="13">
+                  marker
+                </text>
+              </svg>
+              <figcaption>
+                Place the marker flat against the front. Step slightly to one
+                side so the photo also shows the cargo depth.
+              </figcaption>
+            </figure>
+            <ol>
+              <li>
+                Show the whole{' '}
+                {mode === 'batch'
+                  ? 'group, with space between units'
+                  : 'unit, including its pallet'}
+                .
+              </li>
+              <li>
+                Place the <strong>20 cm scan marker</strong> beside it, on the
+                same plane.
+              </li>
+              <li>
+                Use an angled view showing the front and side. Keep edges clear
+                and labels readable.
+              </li>
+            </ol>
+            <a
+              href="/cargo-scan-marker.html"
+              target="_blank"
+              rel="noreferrer"
+              onClick={(e) => {
+                if (!hasNativeFileExporter()) return;
+                e.preventDefault();
+                void fetch('/cargo-scan-marker.html')
+                  .then((r) => {
+                    if (!r.ok)
+                      throw new Error('The marker file could not be opened.');
+                    return r.text();
+                  })
+                  .then((t) =>
+                    saveTextFile('cargo-scan-marker.html', t, 'text/html'),
+                  )
+                  .catch((e) => setError((e as Error).message));
+              }}
+            >
+              {hasNativeFileExporter()
+                ? 'Share printable 20 cm marker'
+                : 'Open printable 20 cm marker'}
+            </a>
+            <p>
+              Print at 100% and check the outer square with a ruler. Photo
+              dimensions are approximate.
+            </p>
+          </div>
+        )}
         {!available && (
           <p className="notice">
             Photo analysis is unavailable until runtime AI is connected. You can
@@ -246,7 +269,9 @@ export default function PhotoInput({
                   : 'Take photo or choose from device'}
               </span>
               <small>
-                Full cargo visible · marker visible · minimal overlap
+                {demoEstimate
+                  ? 'Recognizable cargo · marker and side view optional'
+                  : 'Full cargo visible · marker visible · minimal overlap'}
               </small>
               <PhotoSourcePicker
                 label={role === 'items' ? 'Cargo photo' : 'Side photo'}
@@ -254,7 +279,7 @@ export default function PhotoInput({
                 onSelect={(f) => {
                   void (async () => {
                     try {
-                      const data = await prepare(f);
+                      const data = await prepare(f, demoEstimate);
                       setPhotos((p) => ({ ...p, [role]: data }));
                       setResult(null);
                       setError('');
@@ -321,7 +346,9 @@ export default function PhotoInput({
           )}{' '}
           {busy
             ? 'Checking visibility and cargo…'
-            : 'Check photo & identify cargo'}
+            : demoEstimate
+              ? 'Check photo & estimate demo dimensions'
+              : 'Check photo & identify cargo'}
         </button>
         {error && (
           <p role="alert" className="error">
@@ -331,9 +358,16 @@ export default function PhotoInput({
         {result && (
           <CargoPhotoResults
             result={result}
+            demoEstimate={demoEstimate}
             onAdd={() => {
               try {
-                onApply(captureCargo(result, mode === 'single' ? quantity : 1));
+                onApply(
+                  captureCargo(
+                    result,
+                    mode === 'single' ? quantity : 1,
+                    demoEstimate ? 'demo' : 'reference',
+                  ),
+                );
               } catch (e) {
                 setError((e as Error).message);
               }

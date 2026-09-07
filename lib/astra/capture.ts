@@ -28,28 +28,37 @@ export const captureSchema = z.object({
     .max(30),
 });
 export type CaptureResult = z.infer<typeof captureSchema>;
-export function captureCargo(result: CaptureResult, quantity = 1): Item[] {
-  if (result.quality !== 'good' || result.secondViewRequired)
+export function captureCargo(
+  result: CaptureResult,
+  quantity = 1,
+  estimateMode: 'reference' | 'demo' = 'reference',
+): Item[] {
+  const demo = estimateMode === 'demo';
+  if (result.quality !== 'good' || (!demo && result.secondViewRequired))
     throw new Error(result.guidance || 'Retake the photo before adding cargo.');
   if (quantity !== 1 && result.items.length !== 1)
     throw new Error('Quantity applies to a single cargo scan.');
   let units: Item[] = [];
   for (const i of result.items) {
+    const confidence =
+      demo && !result.markerVisible
+        ? Math.min(i.dimensionConfidence, 0.5)
+        : i.dimensionConfidence;
     const unit: Item = {
       ...newCargo(i.id),
       name: i.name,
-      dims: result.markerVisible && i.dims ? i.dims : [0, 0, 0],
+      dims: (demo || result.markerVisible) && i.dims ? i.dims : [0, 0, 0],
       mass: i.mass ?? 0,
       fragile: i.fragile,
       source: 'astra_estimate',
-      confidence: i.dimensionConfidence,
-      fieldConfidence: { dims: i.dimensionConfidence, mass: i.massConfidence },
+      confidence,
+      fieldConfidence: { dims: confidence, mass: i.massConfidence },
       provenance: {
         dims: 'astra_estimate',
         mass: 'astra_estimate',
         handling: 'astra_estimate',
       },
-      notes: i.notes,
+      notes: demo ? `Demo dimensions · approximate. ${i.notes}` : i.notes,
     };
     units = [...units, ...expandCargo(unit, quantity, units)];
   }

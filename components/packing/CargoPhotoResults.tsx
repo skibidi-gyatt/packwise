@@ -3,9 +3,11 @@ import type { CaptureResult } from '@/lib/astra/capture';
 export default function CargoPhotoResults({
   result,
   onAdd,
+  demoEstimate = false,
 }: {
   result: CaptureResult;
   onAdd: () => void;
+  demoEstimate?: boolean;
 }) {
   const format = (value: number) =>
     value.toLocaleString('en-SG', { maximumFractionDigits: 2 });
@@ -14,15 +16,23 @@ export default function CargoPhotoResults({
       <h3>
         {result.quality === 'retake'
           ? 'Retake recommended'
-          : result.secondViewRequired
-            ? 'A side view is needed'
-            : 'Capture checked'}
+          : demoEstimate
+            ? 'Demo dimensions · approximate'
+            : result.secondViewRequired
+              ? 'A side view is needed'
+              : 'Capture checked'}
       </h3>
       <p>{result.guidance}</p>
-      {result.secondViewRequired && (
+      {result.secondViewRequired && !demoEstimate && (
         <p>Take another photo from the side using the Side view field above.</p>
       )}
-      {!result.markerVisible && (
+      {demoEstimate && result.quality === 'good' && (
+        <p className="notice">
+          Rough estimates for the demo. Review dimensions and enter any missing
+          weight in cargo check.
+        </p>
+      )}
+      {!result.markerVisible && !demoEstimate && (
         <p className="notice">
           The marker was not usable. Enter measured dimensions before planning
           this cargo.
@@ -39,7 +49,7 @@ export default function CargoPhotoResults({
                 <div key={label}>
                   <dt>{label}</dt>
                   <dd>
-                    {result.markerVisible && item.dims
+                    {(demoEstimate || result.markerVisible) && item.dims
                       ? `${format(item.dims[axis])} cm`
                       : 'Required'}
                   </dd>
@@ -61,7 +71,7 @@ export default function CargoPhotoResults({
         ))}
       </ul>
       {result.quality === 'good' &&
-        !result.secondViewRequired &&
+        (demoEstimate || !result.secondViewRequired) &&
         result.items.length > 0 && (
           <button className="primary" onClick={onAdd}>
             Add to cargo check

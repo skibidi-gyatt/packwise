@@ -119,6 +119,46 @@ void test('scan-one quantity creates independent units and preserves group ident
   assert.equal(units[1].dims[0], 60);
   assert.throws(() => expandCargo(units[1], 30, units));
 });
+void test('demo cargo keeps uncalibrated dimensions but still requires weight and review', () => {
+  const rough = {
+    ...capture,
+    markerVisible: false,
+    secondViewRequired: true,
+    items: [{ ...capture.items[0], mass: null }],
+  };
+  const unit = captureCargo(rough, 1, 'demo')[0];
+  assert.deepEqual(unit.dims, [60, 40, 50]);
+  assert.equal(unit.mass, 0);
+  assert.equal(unit.fieldConfidence?.dims, 0.5);
+  assert.match(unit.notes ?? '', /Demo dimensions/);
+  assert.equal(cargoCheck(unit).status, 'required');
+  assert.equal(cargoCheck({ ...unit, mass: 18 }).status, 'check');
+  assert.throws(() => captureCargo({ ...rough, quality: 'retake' }, 1, 'demo'));
+});
+void test('demo cargo prompt allows missing markers and inferred depth without guessing weight', async () => {
+  let sent: Record<string, unknown> = {};
+  const transport = (async (_url: unknown, init: RequestInit) => {
+    sent = JSON.parse(init.body as string);
+    return Response.json({
+      status: 'completed',
+      output: [
+        { content: [{ type: 'output_text', text: JSON.stringify(capture) }] },
+      ],
+    });
+  }) as typeof fetch;
+  await captureCargoPhoto(
+    { key: 'test', model: 'test' },
+    [{ role: 'items', data: 'data:image/jpeg;base64,AA==' }],
+    '',
+    'single',
+    [],
+    transport,
+    'demo',
+  );
+  assert.match(String(sent.instructions), /reference marker is NOT required/);
+  assert.match(String(sent.instructions), /Infer obscured depth/);
+  assert.match(String(sent.instructions), /Never invent weight/);
+});
 void test('photo gap filling retains authoritative per-axis measurements and weight', () => {
   const company = parseCargoImport(
     'id,width,height,length,weight\nS01,120,,100,420',
