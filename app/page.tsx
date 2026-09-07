@@ -1,4 +1,4 @@
-import Planner from '@/components/packing/Planner';
+import WebsiteEntry from '@/components/packing/WebsiteEntry';
 export default function Home() {
-  return <Planner />;
+  return <WebsiteEntry />;
 }

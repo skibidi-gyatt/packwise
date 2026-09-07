@@ -5,6 +5,7 @@ import {
   interpret,
   interpretCargo,
   captureCargoPhoto,
+  captureTransportPhoto,
 } from '@/lib/astra/client';
 const runtime = () => {
   const e = env as Record<string, string | undefined>;
@@ -21,6 +22,11 @@ const image = z.object({
     .regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/),
 });
 const bodySchema = z.discriminatedUnion('action', [
+  z.object({
+    action: z.literal('transport-capture'),
+    images: z.array(image).min(1).max(2),
+    reference: z.string().min(1).max(1500),
+  }),
   z.object({
     action: z.literal('capture'),
     images: z.array(image).min(1).max(2),
@@ -124,11 +130,13 @@ export async function POST(request: Request) {
             b.mode,
             b.items,
           )
-        : b.action === 'perceive'
-          ? await perceive(config, b.images, b.reference)
-          : b.action === 'cargo-intent'
-            ? await interpretCargo(config, b.text, b.items)
-            : await interpret(config, b.text, b.items);
+        : b.action === 'transport-capture'
+          ? await captureTransportPhoto(config, b.images, b.reference)
+          : b.action === 'perceive'
+            ? await perceive(config, b.images, b.reference)
+            : b.action === 'cargo-intent'
+              ? await interpretCargo(config, b.text, b.items)
+              : await interpret(config, b.text, b.items);
     return Response.json(
       { result, provider: 'astra', model: config.model },
       { headers: { 'Cache-Control': 'no-store' } },

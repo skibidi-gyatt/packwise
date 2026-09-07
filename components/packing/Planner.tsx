@@ -85,8 +85,10 @@ type Change = {
 };
 export default function Planner({
   phoneMode = false,
+  initialTransport,
 }: {
   phoneMode?: boolean;
+  initialTransport?: Container;
 }) {
   const [saved] = useState(() => (phoneMode ? readPhoneDraft() : null));
   const [saveError, setSaveError] = useState('');
@@ -104,15 +106,25 @@ export default function Planner({
     [onlyChecks, setOnlyChecks] = useState(false);
   const [allMetrics, setAllMetrics] = useState(false);
   const [items, setItems] = useState(saved?.items ?? seed.items),
-    [bag, setBag] = useState(saved?.bag ?? seed.bag),
+    [bag, setBag] = useState(saved?.bag ?? initialTransport ?? seed.bag),
     [prefs, setPrefs] = useState<Preferences>(
       saved?.prefs ?? {
         ...defaultPreferences,
         route: 1,
       },
     );
-  const [plan, setPlan] = useState(saved?.plan ?? seedPlan),
-    [baseline, setBaseline] = useState(saved?.baseline ?? seedBase),
+  const [plan, setPlan] = useState(
+      () =>
+        saved?.plan ??
+        (initialTransport ? solve(seed.items, initialTransport) : seedPlan),
+    ),
+    [baseline, setBaseline] = useState(
+      () =>
+        saved?.baseline ??
+        (initialTransport
+          ? solve(seed.items, initialTransport, 'baseline')
+          : seedBase),
+    ),
     [view, setView] = useState<'baseline' | 'optimized'>(
       saved?.view ?? 'baseline',
     );
