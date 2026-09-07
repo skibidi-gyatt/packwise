@@ -8,6 +8,7 @@ import {
   DialogDescription,
 } from '@/components/ui/dialog';
 import { csvTemplate, parseCargoImport } from '@/lib/packing/csv';
+import { saveTextFile } from '@/lib/packing/files';
 import type { Item } from '@/lib/packing/model';
 export default function ManifestInput({
   onClose,
@@ -31,14 +32,11 @@ export default function ManifestInput({
         <button
           className="text-button"
           onClick={() => {
-            const u = URL.createObjectURL(
-              new Blob([csvTemplate], { type: 'text/csv' }),
-            );
-            const a = document.createElement('a');
-            a.href = u;
-            a.download = 'cargo-template.csv';
-            a.click();
-            setTimeout(() => URL.revokeObjectURL(u), 1000);
+            void saveTextFile(
+              'cargo-template.csv',
+              csvTemplate,
+              'text/csv',
+            ).catch((e) => setError((e as Error).message));
           }}
         >
           Download CSV template

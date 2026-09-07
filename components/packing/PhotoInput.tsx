@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import Image from 'next/image';
+import { hasNativeFileExporter, saveTextFile } from '@/lib/packing/files';
 import { Camera, LoaderCircle } from 'lucide-react';
 import {
   Dialog,
@@ -179,8 +180,28 @@ export default function PhotoInput({
               and labels readable.
             </li>
           </ol>
-          <a href="/cargo-scan-marker.html" target="_blank" rel="noreferrer">
-            Open printable 20 cm marker
+          <a
+            href="/cargo-scan-marker.html"
+            target="_blank"
+            rel="noreferrer"
+            onClick={(e) => {
+              if (!hasNativeFileExporter()) return;
+              e.preventDefault();
+              void fetch('/cargo-scan-marker.html')
+                .then((r) => {
+                  if (!r.ok)
+                    throw new Error('The marker file could not be opened.');
+                  return r.text();
+                })
+                .then((t) =>
+                  saveTextFile('cargo-scan-marker.html', t, 'text/html'),
+                )
+                .catch((e) => setError((e as Error).message));
+            }}
+          >
+            {hasNativeFileExporter()
+              ? 'Share printable 20 cm marker'
+              : 'Open printable 20 cm marker'}
           </a>
           <p>
             Print at 100% and check the outer square with a ruler. Photo

@@ -36,6 +36,12 @@ yarn-error.log*
 .vercel
 next-env.d.ts
 /dist/
+/mobile-dist/
+/ios/App/App/public/
+/ios/App/App/capacitor.config.json
+/ios/App/CapApp-SPM/.build/
+**/xcuserdata/
+*.ipa
 /.wrangler/
 /outputs/
 /work/

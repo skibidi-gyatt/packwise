@@ -60,6 +60,8 @@ import Scene from './Scene';
 import { ItemEditor, BagEditor } from './Editors';
 import PhotoInput from './PhotoInput';
 import ManifestInput from './ManifestInput';
+import { saveTextFile } from '@/lib/packing/files';
+import { readPhoneDraft, phoneDraftKey } from '@/lib/packing/phone-draft';
 import CargoForm from './CargoForm';
 import TransportPicker from './TransportPicker';
 import GuidedLoading from './GuidedLoading';
@@ -81,25 +83,39 @@ type Change = {
   afterBlockers: number;
   id?: string;
 };
-export default function Planner() {
-  const [phase, setPhase] = useState<'cargo' | 'plan' | 'load'>('cargo');
-  const [loadingIndex, setLoadingIndex] = useState(0);
-  const [loadingCompleted, setLoadingCompleted] = useState(0);
+export default function Planner({
+  phoneMode = false,
+}: {
+  phoneMode?: boolean;
+}) {
+  const [saved] = useState(() => (phoneMode ? readPhoneDraft() : null));
+  const [saveError, setSaveError] = useState('');
+  const [phase, setPhase] = useState<'cargo' | 'plan' | 'load'>(
+    saved?.phase ?? 'cargo',
+  );
+  const [loadingIndex, setLoadingIndex] = useState(saved?.loadingIndex ?? 0);
+  const [loadingCompleted, setLoadingCompleted] = useState(
+    saved?.loadingCompleted ?? 0,
+  );
   const [advanced, setAdvanced] = useState(false),
     [expertEdit, setExpertEdit] = useState(false),
     [pickerOpen, setPickerOpen] = useState(false),
-    [hasPlan, setHasPlan] = useState(false),
+    [hasPlan, setHasPlan] = useState(saved?.hasPlan ?? false),
     [onlyChecks, setOnlyChecks] = useState(false);
   const [allMetrics, setAllMetrics] = useState(false);
-  const [items, setItems] = useState(seed.items),
-    [bag, setBag] = useState(seed.bag),
-    [prefs, setPrefs] = useState<Preferences>({
-      ...defaultPreferences,
-      route: 1,
-    });
-  const [plan, setPlan] = useState(seedPlan),
-    [baseline, setBaseline] = useState(seedBase),
-    [view, setView] = useState('baseline');
+  const [items, setItems] = useState(saved?.items ?? seed.items),
+    [bag, setBag] = useState(saved?.bag ?? seed.bag),
+    [prefs, setPrefs] = useState<Preferences>(
+      saved?.prefs ?? {
+        ...defaultPreferences,
+        route: 1,
+      },
+    );
+  const [plan, setPlan] = useState(saved?.plan ?? seedPlan),
+    [baseline, setBaseline] = useState(saved?.baseline ?? seedBase),
+    [view, setView] = useState<'baseline' | 'optimized'>(
+      saved?.view ?? 'baseline',
+    );
   const [selected, setSelected] = useState<string | null>(null),
     [editing, setEditing] = useState<Item | null>(null),
     [assetOpen, setAssetOpen] = useState(false),
@@ -136,6 +152,7 @@ export default function Planner() {
         .includes(search.toLowerCase()),
   );
   useEffect(() => {
+    if (phoneMode) return;
     fetch('/api/astra')
       .then((r) => r.json() as Promise<{ available?: boolean; model?: string }>)
       .then((d) =>
@@ -145,7 +162,42 @@ export default function Planner() {
         }),
       )
       .catch(() => {});
-  }, []);
+  }, [phoneMode]);
+  useEffect(() => {
+    if (!phoneMode) return;
+    try {
+      localStorage.setItem(
+        phoneDraftKey,
+        JSON.stringify({
+          version: 1,
+          items,
+          bag,
+          prefs,
+          phase,
+          view,
+          hasPlan,
+          loadingIndex,
+          loadingCompleted,
+        }),
+      );
+    } catch {
+      queueMicrotask(() =>
+        setSaveError(
+          'This device could not save your latest progress. Export the manifest before closing.',
+        ),
+      );
+    }
+  }, [
+    phoneMode,
+    items,
+    bag,
+    prefs,
+    phase,
+    view,
+    hasPlan,
+    loadingIndex,
+    loadingCompleted,
+  ]);
   useEffect(() => {
     if (!playing) return;
     const timer = setInterval(
@@ -354,17 +406,14 @@ export default function Planner() {
     setOnlyChecks(false);
   }
   function download(name: string, data: unknown) {
-    const blob = new Blob(
-      [typeof data === 'string' ? data : JSON.stringify(data, null, 2)],
-      { type: 'application/json' },
+    void saveTextFile(
+      name,
+      typeof data === 'string' ? data : JSON.stringify(data, null, 2),
+    ).catch((e) =>
+      setError(e instanceof Error ? e.message : 'Could not export this file.'),
     );
-    const url = URL.createObjectURL(blob),
-      a = document.createElement('a');
-    a.href = url;
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
+
   const synthetic =
     items.length > 0 && items.every((i) => i.source === 'sample');
   const routeStops = [...new Set(items.map((i) => i.deliveryStop ?? 1))]
@@ -478,6 +527,11 @@ export default function Planner() {
         </div>
       </header>
       <main id="main">
+        {phoneMode && (
+          <p className={`phone-save-note ${saveError ? 'error' : ''}`}>
+            {saveError || 'Saved on this device · offline planning'}
+          </p>
+        )}
         {phase === 'load' ? (
           <GuidedLoading
             plan={shown}
@@ -596,8 +650,9 @@ export default function Planner() {
             </div>
             {phase === 'plan' && loadingCompleted > 0 && (
               <p className="notice">
-                {loadingCompleted} units marked loaded on this open page.
-                Replanning or changing cargo starts a new checklist.
+                {loadingCompleted} units marked loaded
+                {phoneMode ? ' and saved on this device' : ' on this open page'}
+                . Replanning or changing cargo starts a new checklist.
               </p>
             )}
             {error && (
@@ -710,7 +765,7 @@ export default function Planner() {
                       <Tabs
                         value={view}
                         onValueChange={(v) => {
-                          setView(String(v));
+                          setView(v === 'baseline' ? 'baseline' : 'optimized');
                           setLoadingIndex(0);
                           setLoadingCompleted(0);
                           setStep(30);

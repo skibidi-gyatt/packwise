@@ -4,6 +4,8 @@ An enterprise load-planning prototype evolved from Packwise. One truck, 20 synth
 
 ## Run
 
+For the native iPhone project and Mac installation steps, see [Packwise for iPhone](docs/IPHONE_APP.md).
+
 ```sh
 npm install
 npm run dev
