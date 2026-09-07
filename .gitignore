@@ -39,3 +39,7 @@ next-env.d.ts
 /.wrangler/
 /outputs/
 /work/
+
+# Local design tooling and capture evidence (installed separately)
+/.agents/skills/impeccable/
+/.impeccable/review/

@@ -1,147 +1,95 @@
-# Packwise — one-day product and engineering decision
+# Packwise Cargo: enterprise MVP
 
-## Rubric assessment
+## Frozen one-day concept
 
-| Strict category      | Biggest barrier to a 9–10                            | Our response                                                                                                                         |
-| -------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| Originality          | A familiar vision demo followed by bin packing       | Intent becomes physical constraints; show a real counterfactual with moved items, retrieval blockers, and measured trade-offs.       |
-| Presentation         | Too many controls and invisible reasoning            | One workbench: inventory → 3D model → computed comparison → a single natural-language request → packing steps.                       |
-| Usefulness           | Incorrect measurements or a physically unusable plan | Editable estimates, separate opening measurement, conservative support/load checks, clear failures and remedies.                     |
-| Technical complexity | An LLM wrapper or unsupported physics claims         | Deterministic seeded search, geometric checks, static load propagation, COM, common baseline evaluation, and independent invariants. |
+Cargo knowledge and operator intent become explicit constraints, then an inspectable load plan. The hero is one rigid rear-door truck with 20 mixed pallets/crates and three illustrative stops. The pitch: “Most loading demos show boxes fitting. Packwise shows whether the right shipment can come out when the operation changes.” This is a product thesis, not a market-exclusivity claim.
 
-These choices aim at high scores; they do not guarantee a score or claim that packing optimization itself is new.
+## Existing implementation audit
 
-## Frozen MVP scope
+The starting version had working 3D geometry, rotation/compression, collision/top-entry checks, support and propagated loads, manual editors, photos, strict AI interpretation, a baseline, playback and 17 passing tests.
 
-**Must build today:** one backpack hero; labelled offline sample; editable item and bag properties; optional server-side Astra perception and intent; photo review before application; typed/validated contracts; rotations, bounded compression and depth expansion; collision, opening, weight, support, load and insertion checks; reproducible multi-start solver; same-constraint first-fit baseline; interactive 3D; physical metrics; replan suggestions; failure reasoning; packing instructions; reset and JSON export.
+| Decision | Modules and rationale |
+|---|---|
+| Reused unchanged | Shadcn/Base UI primitives; routing/build/deployment setup; original regression tests and consumer fixtures. |
+| Reused and extended | Solver/model, Three.js scene, editors, photo review, server Responses transport. Geometry, forms, orbit controls and resource disposal remain useful. |
+| Terminology/context | Item→cargo; bag→transport asset; packing→load planning; depth→length; enterprise values and m³ display. Internal compatibility names avoid churn. |
+| Architectural changes | Rear-door insertion/extraction; first-unload constraint; payload/floor limits; stackability; stop obstructions; cargo search orders; quantity-expanded manifests; provenance and merge precedence. |
+| New primary surface | KPIs, truck twin, cargo intelligence, intent patch and actual deltas, searchable manifest and instructions. |
+| Removed from product flow | Weekend narrative, headphones, backpack bulging/comfort scores, speculative trip savings and redundant mode dashboards. Legacy behavior remains tested. |
 
-**Should build if time allows:** moved-item highlighting, exploded view, packing playback, safeguards against stale API responses, responsive layout, API transport tests.
+## Priorities
 
-**Do not build unless ahead:** cloth simulation, photogrammetry, photorealistic object meshes, learned optimizer, warehouse modes, accounts, cloud photo storage, voice capture, arbitrary locked positions, dedicated laptop compartments. Those add implementation and validation risk before improving the main demonstration.
+**Must build — implemented:** enterprise models and terminology, editable dimensions/mass/handling, deterministic optimization, payload/stack/floor checks, 3D load, measured metrics, instructions and optional structured AI.
 
-The user clarified that Astra is the engineering model in Codex and runtime AI is optional. A runtime API key is not necessary for the complete sample/manual flow. Demo data and rules must never be presented as live perception.
+**High value — implemented:** fair baseline, P14 natural-language replan, stop obstructions, playback, layer separation, COM, JSON import/export, Impeccable guidance/review.
 
-## Architecture and data flow
+**Skip:** extra transport dashboards, exact optimization, fleet routing, account administration, certified compliance subsystems, dangerous-goods database, FEA, cloth simulation and photorealistic meshes.
 
-Vinext/React + TypeScript; Three.js renderer; pure TypeScript geometry/optimization; optional server-only OpenAI Responses adapter. State and photos live in browser memory. No cloud photo persistence.
+## Data and authority
+
+`TransportAsset` aliases compatible `Container`: [width,height,length] cm, rear opening [width,height], payload kg, expansion=0, optional floor kg/m² and kind. The door is centred/floor aligned. Truck/container boxes share geometry; the truck is the hero.
+
+`CargoUnit` aliases `Item`: ID/name, external dimensions including pallet, mass, rigidity/orientation, required flag, stackability/top load, destination/stop, first-unload flag and provenance. Quantity expands into unique units before solving. Limits: 30 units and 20 numbered stops.
+
+Sources are sample, manifest, manual or AI estimate. Existing IDs retain every authoritative property during photo merge. New inferred units remain labelled estimates after review. Corrected photo dimensions mark dimension provenance manual; full editor saves mark reviewed fields manual. Operator rules update handling provenance. No independent verification is implied.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-  A[Photos + known reference] --> B[Astra observations and estimates]
-  B --> C[Editable human review]
-  D[Sample kit or manual inputs] --> C
-  C --> E[Validated inventory + container]
-  E --> F[First-fit baseline]
-  E --> G[Seeded multi-start solver]
-  F --> H[Metrics + 3D + insertion steps]
-  G --> H
-  I[User intent] --> J[Astra patch or labelled offline rules]
-  J --> E
+  M[Manifest / manual measurements] --> V[Validate cargo and asset]
+  P[Photos] --> A[Optional Astra perception]
+  A --> G[Review; preserve authoritative IDs]
+  G --> V
+  U[Operator request] --> I[Restricted semantic patch]
+  I --> V
+  V --> B[Simple baseline]
+  V --> S[Deterministic multi-start solver]
+  B --> K[Coordinates, loads and KPIs]
+  S --> K
+  K --> D[3D twin, instructions and effects]
 ```
 
-Astra owns perception, conservative property inference, uncertainty, and translation of user intent. It does not assign authoritative coordinates or invent metric improvements. The deterministic solver owns geometry, physics proxies, scoring and instructions grounded in placements. In offline mode only the advertised intent patterns are supported; unknown requests produce an actionable limitation.
+Offline rules never pose as a live model. Astra handles semantics and uncertainty, never coordinates or KPI improvements. Unknown IDs, duplicate changes and invalid output fail before mutation. Unsupported regulatory/fleet requests return no change. Revision checks prevent stale asynchronous interpretation from overwriting edits.
 
-## Canonical contracts
+## Geometry and objective
 
-See `lib/packing/model.ts` and `lib/astra/schemas.ts`.
+Allowed orientations and wall/existing-face coordinates define candidates. Low/deep placement preferences include mass/balance terms. Checks reject overlap, payload excess, door violations, blocked straight rear insertion, insufficient support, top-load excess and floor overload. Support requires 80% footprint contact and a supported projected centre; loads propagate downward by contact-area shares.
 
-- Units: cm, kg, litres, Nm. Axes: x=left→right, y=bottom→opening, z=back panel→front.
-- `Item`: id, name, dimensions `[width,height,depth]`, mass, colour, rigidity, minimum retained volume ratio, fragility, allowed orientation, access priority, required flag, maximum load on top, source, confidence, notes.
-- `Container`: name, internal dimensions, rectangular opening width/depth, mass limit, allowed depth expansion fraction.
-- `Placement`: item, minimum-corner position, actual packed dimensions, original-axis permutation, retained volume ratio, insertion order.
-- `Plan`: placements, excluded items with reasons, effective envelope, metrics, search count, mode and required-item completeness.
-- `IntentPatch`: restricted item IDs with access/fragility/removal changes, comfort/protection priority switches, and a no-expansion preference.
+A first-unload unit requires no rear corridor blocker and no cargo above its footprint. Later placements cannot invalidate this. It is a hard constraint, not merely a near-door score. Loading order obeys insertion checks; replan animation illustrates movement.
 
-Quantity is represented as separate item instances via Add item, except explicit aggregate proxies such as the sample pair of shoes and folded shirt stack. No hidden quantity multiplier.
+Cargo search evaluates 22 seeded order variants plus baseline. Required-unit count precedes total count; occupied volume and quality break ties. Quality includes lateral/longitudinal COM, extraction access, later-stop blockers and COM height. This bounded heuristic can miss feasible arrangements. Both algorithms use identical constraints.
 
-Dimensions, mass, compression ratios, enum values and IDs are validated. Photo inference is a separate review draft and cannot silently overwrite manual inventory. Editing an item marks it as user-reviewed; confidence is provenance metadata, not measurement accuracy.
+## Measured synthetic scenario
 
-## Packing algorithm
+| Metric | Simple | Optimized |
+|---|---:|---:|
+| Loaded | 14 / 20 | 20 / 20 |
+| Cargo mass | 5,220 kg | 7,300 kg |
+| Cubic utilization | 50.5% | 72.0% |
+| Occupied volume | 17.46 m³ | 24.90 m³ |
+| Payload utilization | 52.2% | 73.0% |
+| Unused bounding volume | 17.10 m³ | 9.66 m³ |
 
-Baseline: input-order first feasible placement, evaluated at the same permitted envelopes as optimization. It obeys the same physics checks and compression bounds.
+Simple loading encounters non-stackable crates early. Optimization rearranges the same cargo under the same checks. No industry savings or vehicle-count claim follows.
 
-Optimizer: 14 deterministic orderings per envelope (large-first, heavy-first, nonfragile-first, seeded shuffled alternatives); extreme-coordinate candidates from surfaces and boundaries; up to six orthogonal rotations; uncompressed/intermediate/minimum soft-item compression; nominal/half/max permitted depth expansion. Include every baseline candidate in the optimized search. A fixed seed makes the demo reproducible.
+P14 extraction blockers fall from 2 to 0; all 20 units remain loaded at 72.0%. Same-target access rises from 33.3 to 100. The KPI becomes Priority access and overall later-stop blocker pairs remain visible; all-stop access is not perfect.
 
-Selection is lexicographic: required items packed, then total count, then quality. It is a finite heuristic, not a proof of optimality or infeasibility. Every returned arrangement satisfies the implemented checks.
+Cubic utilization uses occupied bounding volume/capacity; payload uses mass/capacity. Legacy `metrics.volume` is litres, displayed in m³; exports identify both units. COM is mass weighted in cm. Front/rear figures split cargo mass across geometric halves and are not axle reactions. Floor loads use full footprints. Blocker pairs are not measured handling time. More loaded units can worsen access; show that tradeoff.
 
-### Hard constraints
+## Strict rubric risks
 
-- AABB containment and no positive-volume intersections.
-- Bag mass within the user limit.
-- Upright/flat preserve the original vertical axis; any permits axis permutations.
-- Rigid compression ratio 1; soft compression never below the approved minimum (at least 0.4).
-- Packed cross section fits the measured rectangular opening; no rotation during insertion.
-- No existing object above the candidate's horizontal footprint during insertion.
-- At least 80% base contact, with the projected centre over a supporting item.
-- Contact-area load splitting and propagation to lower supports; no item exceeds its entered maximum top load.
+These are engineering judgments, not predicted judge scores.
 
-Opening cross-section and internal vertical path checks are separate conservative approximations. Opening location, zipper curvature, tilting, and lateral maneuvers at the rim are not modeled; do not claim full motion planning. The opening does not automatically grow when depth expands.
+| Rubric | Strongest evidence | Biggest risk to 9–10 | Best next proof |
+|---|---|---|---|
+| Originality | Semantic rules produce a geometric counterfactual. | Bin packing is established; a chat wrapper is insufficient. | Show the patch and real P14 change; evaluate an unprepared runtime request. |
+| Presentation | Dispatch console, dominant 3D, comparison, playback and manifest. | Audience misses the operational story or assumes a mockup. | Rehearse 90 seconds and point to 2→0 blockers. |
+| Usefulness | Authoritative data, quantities, payload/stack/floor checks and failure reasons. | Synthetic data, simplified clearances and no customer validation. | Validate an anonymized real manifest with a loading supervisor. |
+| Technical complexity | Insertion/extraction, load propagation, multi-start search, strict AI and regressions. | No exact optimum or live vision benchmark. | Show invariants and explain the semantic/deterministic split. |
 
-### Soft scoring and metric definitions
+Real-manifest and live-AI evaluation is the strongest remaining investment, not another transport mode.
 
-- Volume occupied: sum of packed proxy volumes. Utilization = occupied / effective envelope ×100. Less compression can raise this metric; higher is not always better when all items fit.
-- COM: sum(mass × box centre) / packed mass.
-- Lateral balance: `100 × (1 − 2 × |COM.x − width/2| / width)`, clamped 0–100.
-- Rear moment proxy: `sum(mass × depth-centre) × 9.81 / 100` Nm. Lower brings weight nearer the back; not an ergonomic rating.
-- Access: for each immediate-access item, `100/(1+overhead blockers) × (0.65+0.35×item top/bag height)`; average all packed items when none is immediate.
-- Protection proxy: fragile-item wall clearance (up to 35 points), 35 for the enforced load checks, and 30 for a soft proxy within 2 cm. This is not a damage probability or proof of wrapping. With no fragile items it is 100 as not applicable.
-- Quality: weighted average of comfort (`0.4×balance + 0.6×rear-closeness`), access and protection, minus `0.25×compression percentage + 0.65×depth expansion percentage`.
+## Impeccable
 
-Compare item counts first: quality metrics describe only the packed subset. Before/after intent deltas re-evaluate the old arrangement against the new access targets so a denominator change cannot fabricate an improvement. Removal requests change the kit; interpret total mass/moment changes accordingly.
-
-## User interface
-
-Travel equipment workbench: white control panels, navy type, a mineral-blue 3D stage, emerald primary actions, distinct item colours. Inventory on the left; dominant 3D centre; measured comparison on the right; intent bar and ordered packing cards below. On mobile the model comes first and controls stack. Inventory selection and textual steps provide an alternative to pointer-based 3D interaction.
-
-## Hero demonstration / wow moment
-
-90 seconds:
-
-1. Load the explicitly labelled weekend sample or analyze real photos if runtime Astra is configured. Show editable measurements.
-2. Toggle First fit → Optimized. Show the actual change in item count and physical metrics.
-3. Orbit the model. Identify the laptop, fragile camera and COM marker.
-4. “I need my headphones during the flight.” The solver rearranges the bag, highlights moved items, and reports actual same-target access and moment changes. Do not promise every metric improves.
-5. Play the insertion sequence; select the camera to see its computed top load.
-6. Set the opening depth to 5 cm. Show explicit opening failures and remedies; reset.
-7. Explain how the same semantic-to-constraint architecture extends to emergency kits or parcels without building extra modes.
-
-For an AI-focused judging session, configure and rehearse live photo/intent calls before presenting. For runtime/network failure, switch honestly to the sample kit. Never describe the offline parser as an LLM response.
-
-## Implementation order and one-day budget
-
-1. Scaffold/theme/recognizable preview (30 min).
-2. Models, fixtures, geometry and invariant tests (90 min).
-3. Solver, baseline, shared metrics (60 min).
-4. Complete editor→solver→3D→instructions integration (120 min).
-5. Runtime API/photo review and intent patches (60 min).
-6. Failure cases, exports, polish and regression checks (60 min).
-7. Build, private hosting, demo rehearsal and contingency (60 min).
-
-## Source layout
-
-```
-app/page.tsx                  entry
-app/globals.css               design tokens / responsive styles
-app/api/astra/route.ts         server-only optional API
-components/packing/Planner    integrated state / comparison / replanning
-components/packing/Scene      Three.js geometry / picking / playback
-components/packing/Editors    item and bag review
-components/packing/PhotoInput  photo upload / estimates review
-lib/packing/model             contracts / validation
-lib/packing/demo              labelled fixtures
-lib/packing/solver            geometry / load / search / evaluation
-lib/packing/intent            restricted offline patches
-lib/astra                     structured output schemas and transport
-tests                         solver invariants / intent / API contracts
-docs                          brief and runbook
-```
-
-## Approximations and mocks
-
-Mocked: sample observations are authored fixtures; test API transport returns a fixture. Runtime-disabled UI is explicit. No fabricated optimizer metrics.
-
-Approximated: bounding boxes, one-axis fabric compression, depth-only bag expansion, static support/load splitting, COM/moment, nearby-soft-item protection. No mesh reconstruction, zipper motion planning, dynamic impacts, material stresses, strap forces or comfort certification.
-
-Live API validation requires a configured API key and model access; passing mocked transport tests is not a live API test.
-
-Official API sources checked during implementation: [Astra](https://developers.openai.com/api/docs/models/gpt-6-astra), [Structured outputs](https://developers.openai.com/api/docs/guides/structured-outputs), [Image input](https://developers.openai.com/api/docs/guides/images-vision).
+Installed official Impeccable 4.2.2 through its CLI. Initial context loading could not fetch a verified Windows engine; verification was not bypassed. The later single detector run succeeded and its width-animation warning was corrected. A fresh finish reviewer scored all three requested fixes resolved. See validation record for scope; no second detector or clean-detector claim. [Official project](https://github.com/pbakaus/impeccable).

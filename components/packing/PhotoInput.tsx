@@ -1,5 +1,6 @@
 'use client';
 import { useState } from 'react';
+import Image from 'next/image';
 import { Camera, Upload, LoaderCircle } from 'lucide-react';
 import {
   Dialog,
@@ -32,10 +33,12 @@ async function prepare(file: File) {
 }
 export default function PhotoInput({
   available,
+  asset,
   onClose,
   onApply,
 }: {
   available: boolean;
+  asset: Container;
   onClose: () => void;
   onApply: (items: Item[], bag: Container) => void;
 }) {
@@ -47,6 +50,7 @@ export default function PhotoInput({
     [error, setError] = useState(''),
     [result, setResult] = useState<Perception | null>(null),
     [reviewed, setReviewed] = useState(false);
+  const [measured, setMeasured] = useState<string[]>([]);
   const analyze = async () => {
     setBusy(true);
     setError('');
@@ -70,6 +74,7 @@ export default function PhotoInput({
       if (!response.ok) throw new Error(body.error || 'Photo analysis failed.');
       setResult(perceptionSchema.parse(body.result));
       setReviewed(false);
+      setMeasured([]);
     } catch (e) {
       setError(
         e instanceof Error ? e.message : 'Could not analyze the photos.',
@@ -85,13 +90,24 @@ export default function PhotoInput({
       dims: i.dims as [number, number, number],
       color: photoPalette[k % photoPalette.length],
       source: 'astra_estimate',
+      stackable: i.maxTopLoad > 0,
+      deliveryStop: 1,
+      destination: 'Unassigned — review',
+      provenance: {
+        dims: measured.includes(i.id) ? 'manual' : 'astra_estimate',
+        mass: 'astra_estimate',
+        handling: 'astra_estimate',
+      },
     }));
     const container: Container = {
       ...result.container,
+      kind: 'truck',
+      loading: 'rear',
+      expansion: 0,
       dims: result.container.dims as [number, number, number],
       opening: result.container.opening as [number, number],
     };
-    const errors = validateModel(items, container);
+    const errors = validateModel(items, asset);
     if (errors.length) {
       setError(errors.join(' '));
       return;
@@ -101,28 +117,39 @@ export default function PhotoInput({
   return (
     <Dialog open onOpenChange={(open) => !busy && !open && onClose()}>
       <DialogContent className="photo-dialog">
-        <DialogTitle>Start with what’s in front of you.</DialogTitle>
+        <DialogTitle>Astra cargo understanding</DialogTitle>
         <DialogDescription>
-          Photograph the open bag and items laid out separately. A ruler or a
-          known dimension helps. Photos are sent to OpenAI only when you select
+          Photograph cargo labels and the rear opening. A ruler or a known
+          dimension helps. Photos are sent to OpenAI only when you select
           Analyze.
         </DialogDescription>
         {!available && (
           <div className="notice">
             Runtime Astra is not connected. You can preview photos here; use the
-            sample kit or manual editor until a server API key is configured.
+            sample manifest or cargo editor until a server API key is
+            configured.
           </div>
         )}
         <div className="photo-grid">
           {(['container', 'items'] as const).map((role) => (
             <label className="upload-box" key={role}>
               {photos[role] ? (
-                <img src={photos[role]} alt={`${role} photo preview`} />
+                <Image
+                  src={photos[role]!}
+                  width={640}
+                  height={480}
+                  unoptimized
+                  alt={
+                    role === 'container'
+                      ? 'Selected transport asset'
+                      : 'Selected cargo units'
+                  }
+                />
               ) : (
                 <Camera size={32} />
               )}
               <strong>
-                {role === 'container' ? 'Open backpack' : 'Items to pack'}
+                {role === 'container' ? 'Transport asset' : 'Cargo units'}
               </strong>
               <span>Choose photo</span>
               <input
@@ -152,7 +179,7 @@ export default function PhotoInput({
             maxLength={1500}
             value={reference}
             onChange={(e) => setReference(e.target.value)}
-            placeholder="The bag interior is 32 × 48 × 20 cm. The ruler is 30 cm long."
+            placeholder="The truck interior is 240 × 240 × 600 cm. Manifest weight for P14 is 230 kg."
           />
         </label>
         <button
@@ -188,13 +215,15 @@ export default function PhotoInput({
                   <div className="dimension-fields">
                     {i.dims.map((n, axis) => (
                       <label className="field" key={axis}>
-                        {['Width', 'Height', 'Depth'][axis]}
+                        {['Width', 'Height', 'Length'][axis]}
                         <input
                           type="number"
                           min={0.1}
-                          max={200}
+                          max={2000}
                           value={n}
-                          onChange={(e) =>
+                          onChange={(e) => {
+                            setMeasured((ids) => [...new Set([...ids, i.id])]);
+                            setReviewed(false);
                             setResult((r) =>
                               r
                                 ? {
@@ -213,8 +242,8 @@ export default function PhotoInput({
                                     ),
                                   }
                                 : r,
-                            )
-                          }
+                            );
+                          }}
                         />
                       </label>
                     ))}
@@ -223,15 +252,19 @@ export default function PhotoInput({
               ))}
             </div>
             <p className="small muted">
-              Bag estimate: {result.container.dims.join(' × ')} cm; opening{' '}
+              Asset suggestion: {result.container.dims.join(' × ')} cm; opening{' '}
               {result.container.opening.join(' × ')} cm;{' '}
-              {result.container.maxMass} kg limit. Use “Bag settings” after
-              import to correct these values.
+              {result.container.maxMass} kg limit. Existing asset measurements
+              and cargo IDs are retained. New IDs are added after review.
             </p>
-            <label className="check-field">
-              <Checkbox checked={reviewed} onCheckedChange={setReviewed} /> I
-              reviewed these estimates and will verify inferred dimensions and
-              load limits before physically packing.
+            <label className="check-field" htmlFor="photo-review">
+              <Checkbox
+                id="photo-review"
+                checked={reviewed}
+                onCheckedChange={setReviewed}
+              />{' '}
+              I reviewed these estimates and will verify inferred dimensions and
+              load limits before physical loading.
             </label>
             <button className="primary" disabled={!reviewed} onClick={apply}>
               Use reviewed estimates

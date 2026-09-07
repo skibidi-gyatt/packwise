@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { z } from 'zod';
-import { perceive, interpret } from '@/lib/astra/client';
+import { perceive, interpret, interpretCargo } from '@/lib/astra/client';
 const runtime = () => {
   const e = env as Record<string, string | undefined>;
   return {
@@ -22,16 +22,19 @@ const bodySchema = z.discriminatedUnion('action', [
     reference: z.string().max(1500),
   }),
   z.object({
-    action: z.literal('interpret'),
+    action: z.enum(['interpret', 'cargo-intent']),
     text: z.string().min(1).max(1500),
     items: z
       .array(
         z.object({
           id: z.string().min(1).max(40),
           name: z.string().min(1).max(80),
+          deliveryStop: z.number().int().min(1).max(20).optional(),
+          destination: z.string().max(80).optional(),
+          stackable: z.boolean().optional(),
         }),
       )
-      .max(24),
+      .max(30),
   }),
 ]);
 export function GET() {
@@ -57,7 +60,7 @@ export async function POST(request: Request) {
     return Response.json(
       {
         error:
-          'Runtime Astra is not connected. Configure OPENAI_API_KEY on the server, or use the sample kit and manual editor.',
+          'Runtime Astra is not connected. Configure OPENAI_API_KEY on the server, or use the sample manifest and cargo editor.',
       },
       { status: 503 },
     );
@@ -93,7 +96,7 @@ export async function POST(request: Request) {
       return Response.json(
         {
           error:
-            'Invalid request. Use one or two JPEG, PNG or WebP photos, and at most 24 items.',
+            'Invalid request. Use one or two JPEG, PNG or WebP photos, and at most 30 cargo units.',
         },
         { status: 400 },
       );
@@ -101,7 +104,9 @@ export async function POST(request: Request) {
     const result =
       b.action === 'perceive'
         ? await perceive(config, b.images, b.reference)
-        : await interpret(config, b.text, b.items);
+        : b.action === 'cargo-intent'
+          ? await interpretCargo(config, b.text, b.items)
+          : await interpret(config, b.text, b.items);
     return Response.json(
       { result, provider: 'astra', model: config.model },
       { headers: { 'Cache-Control': 'no-store' } },

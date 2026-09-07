@@ -12,9 +12,19 @@ export type Item = {
   access: 'normal' | 'immediate';
   required: boolean;
   maxTopLoad: number;
-  source: 'sample' | 'astra_estimate' | 'manual';
+  source: 'sample' | 'astra_estimate' | 'manual' | 'manifest';
   confidence: number;
   notes: string;
+  destination?: string;
+  deliveryStop?: number;
+  stackable?: boolean;
+  mustUnloadFirst?: boolean;
+  provenance?: Partial<
+    Record<
+      'dims' | 'mass' | 'handling',
+      'sample' | 'manifest' | 'manual' | 'astra_estimate'
+    >
+  >;
 };
 export type Container = {
   name: string;
@@ -22,6 +32,9 @@ export type Container = {
   opening: [number, number];
   maxMass: number;
   expansion: number;
+  kind?: 'truck' | 'container';
+  loading?: 'rear' | 'top';
+  floorLimitKgM2?: number;
 };
 export type Placement = {
   item: Item;
@@ -35,6 +48,7 @@ export type Preferences = {
   comfort: number;
   protection: number;
   access: number;
+  route?: number;
 };
 export type Metrics = {
   mass: number;
@@ -48,7 +62,16 @@ export type Metrics = {
   compression: number;
   expansion: number;
   quality: number;
+  payloadUtilization: number;
+  unusedM3: number;
+  frontMass: number;
+  rearMass: number;
+  longitudinalBalance: number;
+  rehandles: number;
+  floorPeakKgM2: number;
 };
+export type CargoUnit = Item;
+export type TransportAsset = Container;
 export type Plan = {
   placements: Placement[];
   unpacked: { item: Item; reason: string }[];
@@ -68,16 +91,29 @@ export function validateModel(items: Item[], bag: Container) {
   const errors: string[] = [];
   const positive = (x: number, max: number) =>
     Number.isFinite(x) && x > 0 && x <= max;
-  if (items.length > 24)
-    errors.push('Use at most 24 separate items for this prototype.');
+  if (items.length > 30)
+    errors.push('Use at most 30 cargo units for this prototype.');
   if (new Set(items.map((i) => i.id)).size !== items.length)
     errors.push('Each item needs a unique ID.');
-  if (bag.dims.length !== 3 || !bag.dims.every((x) => positive(x, 200)))
-    errors.push('Bag dimensions must be between 0 and 200 cm.');
-  if (bag.opening.length !== 2 || !bag.opening.every((x) => positive(x, 200)))
-    errors.push('Opening dimensions must be positive and at most 200 cm.');
-  if (!positive(bag.maxMass, 100))
-    errors.push('Weight limit must be positive and at most 100 kg.');
+  if (bag.dims.length !== 3 || !bag.dims.every((x) => positive(x, 2000)))
+    errors.push('Asset dimensions must be positive and at most 2,000 cm.');
+  if (bag.opening.length !== 2 || !bag.opening.every((x) => positive(x, 2000)))
+    errors.push('Opening dimensions must be positive and at most 2,000 cm.');
+  if (!positive(bag.maxMass, 100000))
+    errors.push('Payload limit must be positive and at most 100,000 kg.');
+  if (
+    bag.loading === 'rear' &&
+    (bag.expansion !== 0 ||
+      bag.opening[0] > bag.dims[0] ||
+      bag.opening[1] > bag.dims[1])
+  )
+    errors.push(
+      'Rear-door assets are rigid; door width/height cannot exceed the interior.',
+    );
+  if (bag.floorLimitKgM2 !== undefined && !positive(bag.floorLimitKgM2, 100000))
+    errors.push('Enter a positive floor load limit.');
+  if (items.filter((i) => i.mustUnloadFirst).length > 1)
+    errors.push('Only one cargo unit can be first to unload.');
   if (
     !Number.isFinite(bag.expansion) ||
     bag.expansion < 0 ||
@@ -89,8 +125,8 @@ export function validateModel(items: Item[], bag: Container) {
       errors.push('Each item needs a name (up to 80 characters).');
     if (
       i.dims.length !== 3 ||
-      !i.dims.every((x) => positive(x, 200)) ||
-      !positive(i.mass, 100)
+      !i.dims.every((x) => positive(x, 2000)) ||
+      !positive(i.mass, 100000)
     )
       errors.push(`${i.name}: enter positive dimensions and weight.`);
     if (
@@ -105,9 +141,16 @@ export function validateModel(items: Item[], bag: Container) {
     if (
       !Number.isFinite(i.maxTopLoad) ||
       i.maxTopLoad < 0 ||
-      i.maxTopLoad > 100
+      i.maxTopLoad > 100000
     )
-      errors.push(`${i.name}: top-load limit must be 0–100 kg.`);
+      errors.push(`${i.name}: top-load limit must be 0–100,000 kg.`);
+    if (
+      i.deliveryStop !== undefined &&
+      (!Number.isInteger(i.deliveryStop) ||
+        i.deliveryStop < 1 ||
+        i.deliveryStop > 20)
+    )
+      errors.push(`${i.id}: delivery stop must be an integer from 1 to 20.`);
     if (
       !['rigid', 'soft'].includes(i.rigidity) ||
       !['any', 'upright', 'flat'].includes(i.orientation) ||

@@ -13,9 +13,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: 'Packwise — packing with intent',
+  title: 'Packwise Cargo — load planning',
   description:
-    'An interactive backpack packing planner that balances geometry, access, and load. Review your estimates and see every trade-off.',
+    'Cargo intelligence and deterministic 3D load planning. Compare utilization, respect handling limits, and replan around operational intent.',
 };
 
 export default function RootLayout({

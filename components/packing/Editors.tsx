@@ -53,7 +53,7 @@ export function Numeric({
   value,
   onChange,
   min = 0,
-  max = 200,
+  max = 2000,
   step = 0.1,
 }: {
   label: string;
@@ -107,6 +107,7 @@ export function ItemEditor({
       ...draft,
       source: 'manual',
       confidence: 1,
+      provenance: { dims: 'manual', mass: 'manual', handling: 'manual' },
       notes:
         'Properties reviewed by the user. Measurement accuracy is not independently verified.',
     });
@@ -118,11 +119,11 @@ export function ItemEditor({
         <DialogDescription>
           {item.source === 'astra_estimate'
             ? `Astra estimate · ${Math.round(item.confidence * 100)}% confidence. Dimensions and mass are inferred, not measured.`
-            : 'Use the dimensions of the item as you will pack it.'}
+            : 'Use external cargo dimensions, including its pallet and packaging.'}
         </DialogDescription>
         <div className="edit-fields">
           <label className="field full">
-            Item name
+            Cargo description
             <input
               value={draft.name}
               maxLength={80}
@@ -130,7 +131,7 @@ export function ItemEditor({
             />
           </label>
           <div className="dimension-fields">
-            {['Width · cm', 'Height · cm', 'Depth · cm'].map((label, k) => (
+            {['Width · cm', 'Height · cm', 'Length · cm'].map((label, k) => (
               <Numeric
                 key={label}
                 label={label}
@@ -145,17 +146,17 @@ export function ItemEditor({
             ))}
           </div>
           <Numeric
-            label="Weight · kg"
+            label="Cargo weight · kg"
             min={0.01}
-            max={100}
+            max={100000}
             step={0.01}
             value={draft.mass}
             onChange={(mass) => change({ mass })}
           />
           <Numeric
-            label="Max weight on top · kg"
+            label="Maximum top load · kg"
             value={draft.maxTopLoad}
-            max={100}
+            max={100000}
             onChange={(maxTopLoad) => change({ maxTopLoad })}
           />
           <Choice
@@ -186,18 +187,18 @@ export function ItemEditor({
             <Numeric
               label="Minimum retained volume · %"
               min={40}
-              max={100}
+              max={100000}
               step={5}
               value={Math.round(draft.minRatio * 100)}
               onChange={(n) => change({ minRatio: n / 100 })}
             />
           )}
           <Choice
-            label="When do you need it?"
+            label="Unloading access"
             value={draft.access}
             options={[
-              { value: 'normal', label: 'At my destination' },
-              { value: 'immediate', label: 'During the journey' },
+              { value: 'normal', label: 'Follow delivery stop' },
+              { value: 'immediate', label: 'Priority access' },
             ]}
             onChange={(v) => change({ access: v as Item['access'] })}
           />
@@ -215,7 +216,49 @@ export function ItemEditor({
               checked={draft.required}
               onCheckedChange={(required) => change({ required })}
             />{' '}
-            Must pack
+            Required on this load
+          </label>
+          <Numeric
+            label="Delivery stop"
+            value={draft.deliveryStop ?? 1}
+            min={1}
+            max={20}
+            step={1}
+            onChange={(deliveryStop) => change({ deliveryStop })}
+          />
+          <label className="field">
+            Destination
+            <input
+              value={draft.destination ?? ''}
+              maxLength={80}
+              onChange={(e) => change({ destination: e.target.value })}
+            />
+          </label>
+          <label className="check-field" htmlFor="cargo-stackable">
+            <Checkbox
+              id="cargo-stackable"
+              checked={draft.stackable !== false}
+              onCheckedChange={(stackable) =>
+                change({
+                  stackable,
+                  maxTopLoad: stackable ? draft.maxTopLoad : 0,
+                })
+              }
+            />
+            Stackable
+          </label>
+          <label className="check-field" htmlFor="cargo-first-unload">
+            <Checkbox
+              id="cargo-first-unload"
+              checked={draft.mustUnloadFirst ?? false}
+              onCheckedChange={(first) =>
+                change({
+                  mustUnloadFirst: first,
+                  access: first ? 'immediate' : 'normal',
+                })
+              }
+            />
+            Must unload first · clear extraction path
           </label>
         </div>
         <p className="muted small">{item.notes}</p>
@@ -226,10 +269,10 @@ export function ItemEditor({
         )}
         <div className="dialog-actions">
           <button className="text-button danger" onClick={onDelete}>
-            Remove item
+            Remove cargo
           </button>
           <button className="primary" onClick={save}>
-            Save & replan
+            Save & recompute
           </button>
         </div>
       </DialogContent>
@@ -252,14 +295,14 @@ export function BagEditor({
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="edit-dialog">
-        <DialogTitle>Measure your backpack</DialogTitle>
+        <DialogTitle>Transport asset constraints</DialogTitle>
         <DialogDescription>
           Use usable interior dimensions. The opening is a separate, measured
           rectangular approximation.
         </DialogDescription>
         <div className="edit-fields">
           <label className="field full">
-            Bag name
+            Asset name
             <input
               value={draft.name}
               maxLength={60}
@@ -267,7 +310,7 @@ export function BagEditor({
             />
           </label>
           <div className="dimension-fields">
-            {['Width · cm', 'Height · cm', 'Depth · cm'].map((label, k) => (
+            {['Width · cm', 'Height · cm', 'Length · cm'].map((label, k) => (
               <Numeric
                 key={label}
                 label={label}
@@ -282,30 +325,31 @@ export function BagEditor({
             ))}
           </div>
           <Numeric
-            label="Opening width · cm"
+            label="Door width · cm"
             min={1}
             value={draft.opening[0]}
             onChange={(n) => change({ opening: [n, draft.opening[1]] })}
           />
           <Numeric
-            label="Opening depth · cm"
+            label="Door height · cm"
             min={1}
             value={draft.opening[1]}
             onChange={(n) => change({ opening: [draft.opening[0], n] })}
           />
           <Numeric
-            label="Weight limit · kg"
+            label="Payload limit · kg"
             min={0.1}
-            max={100}
+            max={100000}
             value={draft.maxMass}
             onChange={(maxMass) => change({ maxMass })}
           />
           <Numeric
-            label="Allowed depth expansion · %"
-            max={30}
-            step={5}
-            value={Math.round(draft.expansion * 100)}
-            onChange={(n) => change({ expansion: n / 100 })}
+            label="Floor load limit · kg/m²"
+            min={1}
+            max={100000}
+            step={100}
+            value={draft.floorLimitKgM2 ?? 1800}
+            onChange={(floorLimitKgM2) => change({ floorLimitKgM2 })}
           />
         </div>
         {error && (
@@ -314,8 +358,9 @@ export function BagEditor({
           </p>
         )}
         <p className="small muted">
-          Set expansion to 0 for a rigid container. Expansion does not enlarge
-          the measured opening.
+          Rigid asset; rear loading through a centred, floor-aligned door. Floor
+          loading uses the full contact footprint. Wheel loads, axle ratings and
+          securing are not modeled.
         </p>
         <button
           className="primary"
@@ -325,7 +370,7 @@ export function BagEditor({
             else onSave(draft);
           }}
         >
-          Save & replan
+          Save & recompute
         </button>
       </DialogContent>
     </Dialog>

@@ -1,21 +1,31 @@
-# Packwise
+# Packwise Cargo
 
-A one-day hackathon prototype: editable packing estimates, deterministic 3D packing, static load checks, and intent-driven replanning. Built with Astra in Codex; runtime Astra is optional.
+An enterprise load-planning prototype evolved from Packwise. One truck, 20 synthetic cargo units, three stops, and an operator-request → constraint → deterministic geometry loop. Built with Astra in Codex; runtime AI is optional.
+
+## Run
 
 ```sh
 npm install
 npm run dev
 ```
 
-Open the Local URL printed by Vinext (normally http://localhost:3000). The weekend sample, manual editor and supported intent requests work without a key. State lives in memory; Export plan saves a JSON snapshot. Reloading restores the demo.
+Open the URL printed by Vinext. The sample manifest, manual editor, optimizer and advertised offline requests need no key. State lives in browser memory; reload restores the demo. Download JSON saves the manifest. Export load plan saves both algorithms, coordinates, constraints and metrics.
 
-## Runtime Astra (optional)
+## 90-second demo
 
-Copy `.env.example` to `.dev.vars` and set `OPENAI_API_KEY` there for the local Cloudflare runtime; restart the development server. Keep secrets on the server, never in a `VITE_` or `NEXT_PUBLIC_` variable. The default model is `gpt-6-astra`. For hosted Sites, configure `OPENAI_API_KEY` as a secret and `ASTRA_MODEL` through Sites environment settings; local variables are not uploaded.
+1. Start with Simple: **14/20 units, 50.5% utilization**.
+2. Select **Optimize load**: **20/20 units, 72.0%, 7,300 kg**. Show the rear door, stop colors and centre of mass. Six more units fit; this does not prove a vehicle was eliminated.
+3. Select P14 and inspect its **2 extraction blockers**. Select **P14 unloads first**, or type “Shipment P14 must be unloaded first.” Inspect the constraint patch, movement and **0 blockers**, while all 20 units remain loaded. Destination and stop are retained; this is a first-extraction override, not route optimization.
+4. Play the loading sequence and Separate layers. Edit cargo weight or door width. A 90 cm door rejects the demo pallets with a reason.
+5. Reset to rehearse again. Import manifest accepts pasted or uploaded JSON and expands quantities into distinct IDs.
 
-The header reports whether credentials are configured, not whether the key/model has passed a live request. Click Start from photos to select an item photo and optionally a container photo. Add a measured reference, analyze, review inferred dimensions, then import. You can edit all properties and bag settings afterward. If the API fails, the existing plan stays intact; use Reset weekend demo.
+## Optional runtime AI
 
-Photos are downscaled locally before an explicit analysis request and are not stored by the application. `store:false` is sent to the Responses API. Provider data policies still apply.
+Copy `.env.example` to `.dev.vars`, set `OPENAI_API_KEY` and `ASTRA_MODEL`, and restart the local server. Hosted values must be configured separately through Sites. Never expose keys in client environment variables. The default `gpt-6-astra` supports image input, Responses and structured outputs according to [official model documentation](https://developers.openai.com/api/docs/models/gpt-6-astra). Account access still needs verification.
+
+Configured status does not mean a live call succeeded. Without a key, clearly labelled offline rules support first unload, no stacking, removal of one ID, balance and delivery-order preferences. Photo analysis stays disabled. Runtime failures preserve the current plan.
+
+Photos are resized locally, sent only on Analyze, and not stored by this app; requests use `store:false`. New inferred cargo requires review. Existing manifest IDs and asset measurements survive photo import unchanged. Manual measurements take precedence. Inferred mass and load limits are not certified measurements.
 
 ## Validation
 
@@ -25,16 +35,10 @@ npm run typecheck
 npm run build
 ```
 
-Tests cover deterministic search, independent geometric checks, load propagation, rotation, opening and weight bounds, invalid data, baseline fairness, empty/full failure cases, intent handling and mocked Responses transport. A live API call needs credentials and is not implied by those tests.
+22 tests cover original behavior and cargo geometry, support, mass conservation, top/floor loads, first extraction, deterministic search, manifest authority, invalid intent and mocked Responses transport. Live API and vision quality are not validated without credentials.
 
-## Demo
+## Scope
 
-1. Compare First fit and Optimized.
-2. Select an item; inspect top load and retrieval blockers.
-3. Click Headphones during the flight. Watch movement and actual deltas.
-4. Play the packing sequence, then test a smaller opening in Bag settings.
-5. Reset and export the result.
+One rigid rear-door asset; at most 30 units; bounded heuristic search. No fleet routing, axle certification, securing approval, dangerous-goods compliance, aircraft contours, vessel stability or global-optimum guarantee. Floor loading uses full footprints. Forklifts, straps and swept turning/lifting clearance are absent. Replan animation illustrates change, not an executable rearrangement path.
 
-See [the product and architecture brief](docs/BUILD_BRIEF.md) for rubric risks, frozen scope, data flow, schemas, algorithm, exact scores and the 90-second demo.
-
-This is an axis-aligned planning model, not a safety/ergonomics certification. Opening position and zipper/tilting motion are not simulated. Quality scores describe only packed items: always compare counts first.
+See [enterprise build brief](docs/BUILD_BRIEF.md) for reuse, architecture, rubric risks and one-day priorities; [validation record](docs/VALIDATION.md) for verification.

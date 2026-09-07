@@ -21,6 +21,8 @@ export default function Scene({
 }) {
   const host = useRef<HTMLDivElement>(null);
   const view = useRef<THREE.Vector3 | null>(null);
+  const assetSize = useRef('');
+  const previous = useRef(new Map<string, THREE.Vector3>());
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     if (!host.current) return;
@@ -29,7 +31,7 @@ export default function Scene({
     try {
       renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     } catch {
-      setFailed(true);
+      queueMicrotask(() => setFailed(true));
       return;
     }
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -42,9 +44,22 @@ export default function Scene({
     const scene = new THREE.Scene();
     const [w, h, d] = plan.container.dims;
     const scale = Math.max(w, h, d);
-    const camera = new THREE.PerspectiveCamera(37, 1, 0.1, 2000);
+    const key = plan.container.dims.join(',');
+    if (assetSize.current !== key) {
+      view.current = null;
+      previous.current.clear();
+      assetSize.current = key;
+    }
+    const priorPositions = previous.current;
+    previous.current = new Map();
+    const cargo = plan.container.loading === 'rear';
+    const unit = cargo ? h / 40 : 1;
+    const camera = new THREE.PerspectiveCamera(37, 1, 0.1, scale * 20);
     camera.position.copy(
-      view.current ?? new THREE.Vector3(scale * 1.45, h * 0.9, scale * 1.8),
+      view.current ??
+        (cargo
+          ? new THREE.Vector3(scale * 1.05, h * 1.65, scale * 0.96)
+          : new THREE.Vector3(scale * 1.45, h * 0.9, scale * 1.8)),
     );
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, h * 0.48, 0);
@@ -63,7 +78,7 @@ export default function Scene({
     const envelope = new THREE.LineSegments(
       new THREE.EdgesGeometry(bagGeo),
       new THREE.LineBasicMaterial({
-        color: 0x657f8e,
+        color: cargo ? 0x839da9 : 0x657f8e,
         transparent: true,
         opacity: 0.58,
       }),
@@ -83,11 +98,40 @@ export default function Scene({
     );
     back.position.set(0, h / 2, -d / 2 - 0.1);
     scene.add(back);
+    if (cargo) {
+      const floor = new THREE.Mesh(
+        new THREE.BoxGeometry(w, 3, d),
+        new THREE.MeshStandardMaterial({ color: 0x385260, roughness: 0.9 }),
+      );
+      floor.position.set(0, -2, 0);
+      scene.add(floor);
+      const door = new THREE.LineSegments(
+        new THREE.EdgesGeometry(
+          new THREE.BoxGeometry(
+            plan.container.opening[0],
+            plan.container.opening[1],
+            1,
+          ),
+        ),
+        new THREE.LineBasicMaterial({ color: 0x62d0ad }),
+      );
+      door.position.set(0, plan.container.opening[1] / 2, d / 2 + 1);
+      scene.add(door);
+      const arrow = new THREE.ArrowHelper(
+        new THREE.Vector3(0, 0, -1),
+        new THREE.Vector3(0, 2, d / 2 + 90),
+        70,
+        0x62d0ad,
+        18,
+        12,
+      );
+      scene.add(arrow);
+    }
     const grid = new THREE.GridHelper(
       Math.max(w, d) * 1.55,
       12,
-      0xafc2cc,
-      0xd0dce1,
+      cargo ? 0x395360 : 0xafc2cc,
+      cargo ? 0x253f4e : 0xd0dce1,
     );
     grid.position.y = -0.2;
     scene.add(grid);
@@ -108,17 +152,33 @@ export default function Scene({
           transparent: true,
         }),
       );
-      sprite.scale.set(size * 5.33, size, 1);
+      sprite.scale.set(size * 5.33 * unit, size * unit, 1);
       return sprite;
     };
-    const backLabel = label('BACK PANEL', '#5b7685', 2.7);
-    backLabel.position.set(0, h + 4, -d / 2);
+    const backLabel = label(
+      cargo ? 'BULKHEAD' : 'BACK PANEL',
+      cargo ? '#b4c9d3' : '#5b7685',
+      2.7,
+    );
+    backLabel.position.set(0, h + 4 * unit, -d / 2);
     scene.add(backLabel);
-    const widthLabel = label(`${w} cm`, '#5b7685', 2.7);
-    widthLabel.position.set(0, -3, d / 2 + 3);
+    const widthLabel = label(
+      cargo ? `REAR DOORS · ${w / 100} m` : `${w} cm`,
+      cargo ? '#b4c9d3' : '#5b7685',
+      2.7,
+    );
+    widthLabel.position.set(0, -3 * unit, d / 2 + 5 * unit);
     scene.add(widthLabel);
-    const heightLabel = label(`${h} cm`, '#5b7685', 2.7);
-    heightLabel.position.set(w / 2 + 5, h / 2, -d / 2);
+    const heightLabel = label(
+      cargo ? `${d / 100} m usable length` : `${h} cm`,
+      cargo ? '#b4c9d3' : '#5b7685',
+      2.7,
+    );
+    heightLabel.position.set(
+      w / 2 + 8 * unit,
+      cargo ? -3 * unit : h / 2,
+      cargo ? 0 : -d / 2,
+    );
     scene.add(heightLabel);
     const selectable: THREE.Object3D[] = [];
     const anim: {
@@ -142,7 +202,7 @@ export default function Scene({
         roughness: 0.6,
         metalness: 0.05,
         transparent: true,
-        opacity: selected && !isSelected ? 0.5 : 0.91,
+        opacity: selected && !isSelected ? 0.65 : 0.96,
       });
       const mesh = new THREE.Mesh(geometry, mat);
       mesh.userData.id = p.item.id;
@@ -154,7 +214,7 @@ export default function Scene({
           color: isSelected
             ? 0xffffff
             : moved.includes(p.item.id)
-              ? 0x007b68
+              ? 0x69f1bd
               : 0x314858,
           transparent: true,
           opacity: isSelected ? 1 : 0.35,
@@ -162,18 +222,29 @@ export default function Scene({
       );
       group.add(edges);
       const itemLabel = label(
-        `${p.order}  ${p.item.name}`,
-        isSelected ? '#004f43' : '#193a48',
-        Math.min(p.dims[0] / 5.5, 2.5),
+        cargo ? p.item.id : `${p.order}  ${p.item.name}`,
+        cargo ? '#f3f8fb' : isSelected ? '#004f43' : '#193a48',
+        cargo ? 2.8 : Math.min(p.dims[0] / 5.5, 2.5),
       );
-      itemLabel.position.set(0, p.dims[1] / 2 + 0.8, p.dims[2] / 2 + 0.2);
+      itemLabel.position.set(
+        0,
+        cargo ? p.dims[1] * 0.1 : p.dims[1] / 2 + 0.8,
+        p.dims[2] / 2 + unit,
+      );
       group.add(itemLabel);
       const target = new THREE.Vector3(
         p.pos[0] + p.dims[0] / 2 - w / 2,
-        p.pos[1] + p.dims[1] / 2 + (exploded ? p.order * 4 : 0),
+        p.pos[1] +
+          p.dims[1] / 2 +
+          (exploded ? (cargo ? p.pos[1] * 0.55 : p.order * 4) : 0),
         p.pos[2] + p.dims[2] / 2 - d / 2,
       );
-      const start = target.clone().add(new THREE.Vector3(0, 6, 0));
+      const start =
+        priorPositions.get(p.item.id)?.clone() ??
+        (cargo
+          ? new THREE.Vector3(target.x, target.y, d / 2 + p.dims[2])
+          : target.clone().add(new THREE.Vector3(0, 6, 0)));
+      previous.current.set(p.item.id, target.clone());
       group.position.copy(start);
       scene.add(group);
       anim.push({ mesh: group, target, start });
@@ -182,14 +253,14 @@ export default function Scene({
       const c = plan.metrics.com;
       const point = new THREE.Vector3(c[0] - w / 2, c[1], c[2] - d / 2);
       const ball = new THREE.Mesh(
-        new THREE.SphereGeometry(1, 16, 16),
+        new THREE.SphereGeometry(unit, 16, 16),
         new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false }),
       );
       ball.position.copy(point);
       ball.renderOrder = 99;
       scene.add(ball);
       const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(1.7, 0.17, 8, 32),
+        new THREE.TorusGeometry(1.7 * unit, 0.17 * unit, 8, 32),
         new THREE.MeshBasicMaterial({ color: 0x067c67, depthTest: false }),
       );
       ring.position.copy(point);
@@ -204,9 +275,9 @@ export default function Scene({
         new THREE.Line(
           lineGeo,
           new THREE.LineDashedMaterial({
-            color: 0x007b68,
-            dashSize: 1,
-            gapSize: 0.7,
+            color: cargo ? 0x69f1bd : 0x007b68,
+            dashSize: unit,
+            gapSize: 0.7 * unit,
           }),
         ).computeLineDistances(),
       );
@@ -216,6 +287,20 @@ export default function Scene({
         height = el.clientHeight;
       renderer.setSize(width, height);
       camera.aspect = width / height;
+      if (cargo && camera.aspect < 1.3) {
+        const halfAngle = Math.atan(
+          Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) *
+            Math.min(1, camera.aspect),
+        );
+        const radius = Math.hypot(w, h, d) / 2;
+        const direction = camera.position
+          .clone()
+          .sub(controls.target)
+          .normalize();
+        camera.position
+          .copy(controls.target)
+          .addScaledVector(direction, (radius / Math.sin(halfAngle)) * 1.05);
+      }
       camera.updateProjectionMatrix();
     };
     const ro = new ResizeObserver(resize);

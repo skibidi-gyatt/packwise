@@ -1,27 +1,27 @@
 'use client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Backpack,
-  ArrowUpRight,
+  Box,
+  Truck,
   ArrowRight,
+  ArrowUpRight,
   RotateCcw,
   Download,
   Camera,
   Plus,
   SlidersHorizontal,
   Check,
-  Box,
-  Sparkles,
-  Headphones,
-  ShieldCheck,
-  MoveUpRight,
   Layers,
   Play,
   Pause,
   ChevronRight,
-  Weight,
   Info,
   LoaderCircle,
+  Search,
+  Route,
+  ShieldCheck,
+  ScanLine,
+  ArrowDownToLine,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Slider } from '@/components/ui/slider';
@@ -31,70 +31,104 @@ import {
   DialogTitle,
   DialogDescription,
 } from '@/components/ui/dialog';
-import { freshDemo } from '@/lib/packing/demo';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
+import type { Item, Container, Preferences } from '@/lib/packing/model';
 import { defaultPreferences, volume } from '@/lib/packing/model';
-import type { Item, Container, Plan, Preferences } from '@/lib/packing/model';
+import { freshCargo, stops } from '@/lib/packing/cargo-demo';
 import {
   solve,
-  evaluate,
   instruction,
-  blockers,
+  unloadBlockers,
   topLoads,
+  evaluate,
 } from '@/lib/packing/solver';
-import { offlineIntent, applyIntent } from '@/lib/packing/intent';
-import { intentSchema } from '@/lib/astra/schemas';
+import {
+  cargoOfflineIntent,
+  applyCargoIntent,
+  cargoIntentSchema,
+} from '@/lib/packing/cargo-intent';
+import type { CargoIntent } from '@/lib/packing/cargo-intent';
+import { mergePhotoCargo, manifestText } from '@/lib/packing/manifest';
 import Scene from './Scene';
 import { ItemEditor, BagEditor } from './Editors';
 import PhotoInput from './PhotoInput';
-
-const initial = freshDemo();
-const initialPlan = solve(initial.items, initial.bag);
-const initialBaseline = solve(initial.items, initial.bag, 'baseline');
-const number = (n: number, d = 0) => n.toFixed(d);
-const signed = (n: number, d = 0) => `${n > 0 ? '+' : ''}${n.toFixed(d)}`;
-
+import ManifestInput from './ManifestInput';
+const seed = freshCargo(),
+  seedBase = solve(seed.items, seed.bag, 'baseline'),
+  seedPlan = solve(seed.items, seed.bag);
+const fmt = (n: number, d = 0) =>
+  n.toLocaleString('en-SG', {
+    minimumFractionDigits: d,
+    maximumFractionDigits: d,
+  });
+const delta = (n: number, d = 1) => `${n > 0 ? '+' : ''}${fmt(n, d)}`;
+type Change = {
+  moved: number;
+  utilization: number;
+  access: number;
+  beforeBlockers: number;
+  afterBlockers: number;
+  id?: string;
+};
 export default function Planner() {
-  const [items, setItems] = useState<Item[]>(initial.items),
-    [bag, setBag] = useState<Container>(initial.bag),
-    [prefs, setPrefs] = useState<Preferences>(defaultPreferences);
-  const [plan, setPlan] = useState<Plan>(initialPlan),
-    [baseline, setBaseline] = useState<Plan>(initialBaseline),
-    [view, setView] = useState('optimized');
-  const [selected, setSelected] = useState<string | null>(null),
+  const [allMetrics, setAllMetrics] = useState(false);
+  const [items, setItems] = useState(seed.items),
+    [bag, setBag] = useState(seed.bag),
+    [prefs, setPrefs] = useState<Preferences>({
+      ...defaultPreferences,
+      route: 1,
+    });
+  const [plan, setPlan] = useState(seedPlan),
+    [baseline, setBaseline] = useState(seedBase),
+    [view, setView] = useState('baseline');
+  const [selected, setSelected] = useState<string | null>('P14'),
     [editing, setEditing] = useState<Item | null>(null),
-    [editBag, setEditBag] = useState(false),
-    [photos, setPhotos] = useState(false),
+    [assetOpen, setAssetOpen] = useState(false),
+    [photoOpen, setPhotoOpen] = useState(false),
+    [manifestOpen, setManifestOpen] = useState(false),
     [info, setInfo] = useState(false);
   const [exploded, setExploded] = useState(false),
-    [step, setStep] = useState(24),
+    [step, setStep] = useState(30),
     [playing, setPlaying] = useState(false),
     [moved, setMoved] = useState<string[]>([]);
-  const [prompt, setPrompt] = useState(''),
+  const [search, setSearch] = useState(''),
+    [stopFilter, setStopFilter] = useState('all'),
+    [prompt, setPrompt] = useState(''),
     [busy, setBusy] = useState(false),
-    [message, setMessage] = useState(
-      'Sample kit loaded. Every box and metric below comes from the packing solver.',
-    ),
     [error, setError] = useState('');
   const [api, setApi] = useState({ available: false, model: 'gpt-6-astra' }),
-    [change, setChange] = useState<{
-      access: number;
-      moment: number;
-      count: number;
-    } | null>(null);
-  const revision = useRef(0);
-  const shown = view === 'baseline' ? baseline : plan;
-  const selectedPlacement = shown.placements.find(
-    (p) => p.item.id === selected,
+    [patch, setPatch] = useState<CargoIntent | null>(null),
+    [change, setChange] = useState<Change | null>(null);
+  const [message, setMessage] = useState(
+    'Synthetic dispatch manifest loaded. Compare the simple load with a geometry- and weight-aware plan.',
   );
-  const loads = useMemo(() => topLoads(shown.placements), [shown]);
+  const revision = useRef(0),
+    shown = view === 'baseline' ? baseline : plan;
   const pick = useCallback((id: string) => setSelected(id), []);
+  const selectedUnit = items.find((i) => i.id === selected),
+    placed = shown.placements.find((p) => p.item.id === selected);
+  const loads = useMemo(() => topLoads(shown.placements), [shown]);
+  const filtered = items.filter(
+    (i) =>
+      (stopFilter === 'all' || String(i.deliveryStop ?? 1) === stopFilter) &&
+      `${i.id} ${i.name} ${i.destination}`
+        .toLowerCase()
+        .includes(search.toLowerCase()),
+  );
   useEffect(() => {
     fetch('/api/astra')
       .then((r) => r.json() as Promise<{ available?: boolean; model?: string }>)
-      .then((data) =>
+      .then((d) =>
         setApi({
-          available: data.available === true,
-          model: typeof data.model === 'string' ? data.model : 'gpt-6-astra',
+          available: d.available === true,
+          model: d.model ?? 'gpt-6-astra',
         }),
       )
       .catch(() => {});
@@ -110,50 +144,54 @@ export default function Planner() {
           }
           return s + 1;
         }),
-      900,
+      800,
     );
     return () => clearInterval(timer);
   }, [playing, shown.placements.length]);
   function recompute(
     nextItems: Item[],
     nextBag: Container,
-    nextPrefs: Preferences = prefs,
-    text = 'Properties updated. The plan and comparison have been recomputed.',
-    intent = false,
+    nextPrefs = prefs,
+    reason = 'Manifest updated. All placements and checks have been recomputed.',
+    intent?: CargoIntent,
   ) {
     try {
       const next = solve(nextItems, nextBag, 'optimized', nextPrefs),
         base = solve(nextItems, nextBag, 'baseline', nextPrefs);
+      const old = shown;
       const movedIds = next.placements
         .filter((p) => {
-          const old = plan.placements.find((q) => q.item.id === p.item.id);
+          const q = old.placements.find((q) => q.item.id === p.item.id);
           return (
-            old &&
+            !q ||
             [0, 1, 2].some(
               (k) =>
-                Math.abs(old.pos[k] - p.pos[k]) > 0.01 ||
-                Math.abs(old.dims[k] - p.dims[k]) > 0.01,
+                Math.abs(q.pos[k] - p.pos[k]) > 0.01 ||
+                Math.abs(q.dims[k] - p.dims[k]) > 0.01,
             )
           );
         })
         .map((p) => p.item.id);
-      if (intent) {
-        const oldWithNewTargets = plan.placements.map((p) => ({
-          ...p,
-          item: nextItems.find((i) => i.id === p.item.id) ?? p.item,
-        }));
-        const before = evaluate(
-          oldWithNewTargets,
-          plan.container,
-          bag,
-          nextPrefs,
-        );
-        setChange({
-          access: next.metrics.access - before.access,
-          moment: next.metrics.rearMoment - before.rearMoment,
-          count: movedIds.length,
-        });
-      } else setChange(null);
+      const first = intent?.changes.find((c) => c.first)?.id;
+      const oldUnit = old.placements.find((p) => p.item.id === first),
+        newUnit = next.placements.find((p) => p.item.id === first);
+      const oldTargets = old.placements.map((p) => ({
+        ...p,
+        item: nextItems.find((i) => i.id === p.item.id) ?? p.item,
+      }));
+      const before = evaluate(oldTargets, old.container, bag, nextPrefs);
+      setChange({
+        moved: movedIds.length,
+        utilization: next.metrics.utilization - old.metrics.utilization,
+        access: next.metrics.access - before.access,
+        beforeBlockers: oldUnit
+          ? unloadBlockers(oldUnit, old.placements).length
+          : 0,
+        afterBlockers: newUnit
+          ? unloadBlockers(newUnit, next.placements).length
+          : 0,
+        id: first,
+      });
       revision.current++;
       setItems(nextItems);
       setBag(nextBag);
@@ -161,17 +199,35 @@ export default function Planner() {
       setPlan(next);
       setBaseline(base);
       setView('optimized');
-      setStep(24);
-      setPlaying(false);
       setMoved(movedIds);
-      setMessage(text);
+      setStep(30);
+      setPlaying(false);
+      setMessage(reason);
       setError('');
       setEditing(null);
-      setEditBag(false);
-      setPhotos(false);
+      setAssetOpen(false);
+      setPhotoOpen(false);
+      setManifestOpen(false);
+      if (first) setSelected(first);
+      if (!intent) setPatch(null);
+      return true;
     } catch (e) {
-      setError((e as Error).message);
+      setError(
+        e instanceof Error ? e.message : 'Could not calculate this load.',
+      );
+      return false;
     }
+  }
+  async function optimize() {
+    setBusy(true);
+    await new Promise((r) => setTimeout(r, 25));
+    recompute(
+      items,
+      bag,
+      prefs,
+      'Optimization complete. Every KPI is calculated from the selected load; no business savings are assumed.',
+    );
+    setBusy(false);
   }
   async function request(text: string) {
     if (!text.trim() || busy) return;
@@ -179,332 +235,296 @@ export default function Planner() {
     setError('');
     const rev = revision.current;
     try {
-      let patch;
+      let proposal: CargoIntent;
       if (api.available) {
-        const response = await fetch('/api/astra', {
+        const r = await fetch('/api/astra', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            action: 'interpret',
+            action: 'cargo-intent',
             text,
-            items: items.map(({ id, name }) => ({ id, name })),
+            items: items.map(
+              ({ id, name, deliveryStop, destination, stackable }) => ({
+                id,
+                name,
+                deliveryStop,
+                destination,
+                stackable,
+              }),
+            ),
           }),
         });
-        const body = (await response.json()) as {
-          error?: string;
-          result: unknown;
-        };
-        if (!response.ok)
-          throw new Error(body.error || 'Astra request failed.');
-        patch = intentSchema.parse(body.result);
-      } else patch = offlineIntent(text, items);
+        const body = (await r.json()) as { error?: string; result: unknown };
+        if (!r.ok)
+          throw new Error(
+            body.error ?? 'Astra could not interpret this request.',
+          );
+        proposal = cargoIntentSchema.parse(body.result);
+      } else proposal = cargoOfflineIntent(text, items);
       if (revision.current !== rev)
         throw new Error(
-          'The kit changed while this request was being interpreted. Please send the request again.',
+          'The manifest changed during interpretation. Please submit the request again.',
         );
-      if (
-        !patch.changes.length &&
-        !patch.comfort &&
-        !patch.protection &&
-        !patch.reduceBulging
-      ) {
-        setMessage(patch.explanation);
+      setPatch(proposal);
+      if (!proposal.changes.length && !proposal.balance && !proposal.route) {
         setChange(null);
+        setMessage(proposal.explanation);
         return;
       }
-      const updated = applyIntent(patch, items, bag, prefs);
+      const updated = applyCargoIntent(proposal, items, bag, prefs);
       recompute(
         updated.items,
         updated.bag,
         updated.prefs,
-        `${api.available ? 'Astra' : 'Offline intent rule'}: ${patch.explanation}`,
-        true,
+        proposal.explanation,
+        proposal,
       );
       setPrompt('');
     } catch (e) {
-      setError((e as Error).message);
+      setError(
+        e instanceof Error ? e.message : 'Unable to interpret the request.',
+      );
     } finally {
       setBusy(false);
     }
   }
-  const reset = () => {
-    const d = freshDemo();
+  function reset() {
+    const d = freshCargo();
     recompute(
       d.items,
       d.bag,
-      defaultPreferences,
-      'Weekend sample restored. These are sample measurements, not photo estimates.',
+      { ...defaultPreferences, route: 1 },
+      'Synthetic manifest restored. Start with simple loading, then optimize.',
     );
+    setView('baseline');
+    setSelected('P14');
+    setChange(null);
+    setPatch(null);
     setMoved([]);
-    setSelected(null);
+    setSearch('');
+    setStopFilter('all');
     setExploded(false);
-  };
-  const exportPlan = () => {
+  }
+  function download(name: string, data: unknown) {
     const blob = new Blob(
-      [
-        JSON.stringify(
-          {
-            schemaVersion: 1,
-            units: { dimensions: 'cm', mass: 'kg' },
-            assumptions:
-              'Axis-aligned proxies, straight top insertion, static support, estimated protection. Not a safety certification.',
-            items,
-            container: bag,
-            preferences: prefs,
-            plan,
-            baseline,
-          },
-          null,
-          2,
-        ),
-      ],
+      [typeof data === 'string' ? data : JSON.stringify(data, null, 2)],
       { type: 'application/json' },
     );
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
+    const url = URL.createObjectURL(blob),
+      a = document.createElement('a');
     a.href = url;
-    a.download = 'packwise-plan.json';
+    a.download = name;
     a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-  const add = () => {
-    if (items.length >= 24) {
-      setError('This prototype supports up to 24 items.');
-      return;
-    }
-    setEditing({
-      id: `item-${Date.now()}`,
-      name: 'New item',
-      dims: [10, 10, 10],
-      mass: 0.2,
-      color: '#71a4ba',
-      rigidity: 'rigid',
-      minRatio: 1,
-      fragile: false,
-      orientation: 'any',
-      access: 'normal',
-      required: true,
-      maxTopLoad: 0,
-      source: 'manual',
-      confidence: 1,
-      notes: 'New item. Enter your measurements.',
-    });
-  };
-  const packed = shown.placements.length;
-  const metricsRows = [
+  }
+  const synthetic =
+    items.length > 0 && items.every((i) => i.source === 'sample');
+  const routeStops = [...new Set(items.map((i) => i.deliveryStop ?? 1))]
+    .sort((a, b) => a - b)
+    .map((id) => ({
+      id,
+      color: stops[(id - 1) % stops.length].color,
+      name: [
+        ...new Set(
+          items
+            .filter((i) => (i.deliveryStop ?? 1) === id)
+            .map((i) => i.destination ?? 'Unassigned'),
+        ),
+      ].join(' / '),
+    }));
+  const priorityIds = items
+    .filter((i) => i.access === 'immediate')
+    .map((i) => i.id);
+  const totalM3 = volume(bag.dims) / 1e6;
+  const kpis = [
     {
-      label: 'Items packed',
-      a: baseline.placements.length,
-      b: plan.placements.length,
-      suffix: ` / ${items.length}`,
-      max: Math.max(1, items.length),
+      label: 'Cubic utilization',
+      value: fmt(shown.metrics.utilization, 1),
+      unit: '%',
+      detail: `${fmt(shown.metrics.volume / 1000, 2)} of ${fmt(totalM3, 2)} m³`,
+      base: `Simple ${fmt(baseline.metrics.utilization, 1)}%`,
     },
     {
-      label: 'Lateral balance',
-      a: baseline.metrics.balance,
-      b: plan.metrics.balance,
-      suffix: ' / 100',
-      max: 100,
+      label: 'Cargo loaded',
+      value: String(shown.placements.length),
+      unit: `/ ${items.length}`,
+      detail: `${shown.unpacked.length} pending assignment`,
+      base: `Simple ${baseline.placements.length} units`,
     },
     {
-      label: 'Retrieval access',
-      a: baseline.metrics.access,
-      b: plan.metrics.access,
-      suffix: ' / 100',
-      max: 100,
+      label: 'Payload utilization',
+      value: fmt(shown.metrics.payloadUtilization, 1),
+      unit: '%',
+      detail: `${fmt(shown.metrics.mass)} / ${fmt(bag.maxMass)} kg`,
+      base: `Simple ${fmt(baseline.metrics.payloadUtilization, 1)}%`,
     },
     {
-      label: 'Protection proxy',
-      a: baseline.metrics.protection,
-      b: plan.metrics.protection,
-      suffix: ' / 100',
-      max: 100,
+      label: priorityIds.length ? 'Priority access' : 'Delivery access',
+      value: fmt(shown.metrics.access),
+      unit: '/ 100',
+      detail: priorityIds.length
+        ? `${priorityIds.join(', ')} only · ${shown.metrics.rehandles} route blocker pairs overall`
+        : `${shown.metrics.rehandles} later-stop blocker pairs`,
+      base: `Simple ${fmt(baseline.metrics.access)}`,
+    },
+    {
+      label: 'Unused volume',
+      value: fmt(shown.metrics.unusedM3, 2),
+      unit: 'm³',
+      detail: 'Bounding-box free volume',
+      base: `Simple ${fmt(baseline.metrics.unusedM3, 2)} m³`,
     },
   ];
   return (
-    <div className="app-shell">
-      <header className="masthead">
-        <div className="brand">
-          <span className="brand-mark">
-            <Backpack size={22} />
-          </span>
-          packwise<span className="brand-sub">FIELD LAB / 01</span>
-        </div>
-        <div className="header-actions">
-          <span className={`connection ${api.available ? 'live' : ''}`}>
+    <div className="cargo-app">
+      <header className="cargo-header">
+        <a className="cargo-brand" href="#main">
+          <Box size={25} />
+          <strong>packwise</strong>
+          <span>Cargo intelligence</span>
+        </a>
+        <div className="header-status">
+          <span className="mode-label">
             <i />
-            {api.available ? 'Astra connected' : 'Offline demo'}
+            {api.available ? 'Astra configured' : 'Demo · runtime AI offline'}
           </span>
           <button
             className="icon-button"
-            title="How the model works"
-            aria-label="How the model works"
+            aria-label="Model assumptions"
             onClick={() => setInfo(true)}
           >
-            <Info size={19} />
+            <Info size={18} />
           </button>
-          <button className="quiet-button export" onClick={exportPlan}>
-            <Download size={16} /> Export plan
+          <button
+            className="quiet-button"
+            onClick={() =>
+              download('packwise-load-plan.json', {
+                schemaVersion: 2,
+                units: {
+                  dimensions: 'cm',
+                  mass: 'kg',
+                  occupiedVolume: 'litres',
+                  unusedVolume: 'm3',
+                },
+                asset: bag,
+                cargo: items,
+                constraints: prefs,
+                selected: view,
+                plan,
+                baseline,
+                disclaimer:
+                  'Decision support; not certified loading or securing approval.',
+              })
+            }
+          >
+            <Download size={16} />
+            Export load plan
           </button>
         </div>
       </header>
-      <main>
-        <div className="page-heading">
+      <main id="main">
+        <div className="planning-heading">
           <div>
-            <p className="eyebrow">LESS GUESSWORK. MORE ROOM TO GO.</p>
-            <h1>Everything has its place.</h1>
-            <p className="subtitle">
-              A smarter pack, built around your journey.
+            <h1>
+              Load planning{' '}
+              <span>{synthetic ? 'SG-042' : 'Working manifest'}</span>
+            </h1>
+            <p>
+              {items.length} cargo units · {routeStops.length} delivery{' '}
+              {routeStops.length === 1 ? 'stop' : 'stops'} · One transport asset
             </p>
           </div>
-          <button className="quiet-button" onClick={reset}>
-            <RotateCcw size={15} /> Reset weekend demo
-          </button>
+          <div className="heading-actions">
+            <button className="quiet-button" disabled={busy} onClick={reset}>
+              <RotateCcw size={15} />
+              Reset demo
+            </button>
+            <button
+              className="primary"
+              onClick={() => void optimize()}
+              disabled={busy}
+            >
+              {busy ? (
+                <LoaderCircle className="spin" size={17} />
+              ) : (
+                <Layers size={17} />
+              )}
+              Optimize load
+              <ArrowRight size={17} />
+            </button>
+          </div>
         </div>
-        <div className="workspace">
-          <aside className="inventory panel">
-            <div className="section-heading">
-              <p className="eyebrow">01 / YOUR KIT</p>
-              <span className="small muted">{items.length} items</span>
-            </div>
-            <button className="bag-card" onClick={() => setEditBag(true)}>
-              <span className="bag-icon">
-                <Backpack size={32} strokeWidth={1.4} />
+        <div className="route-line">
+          <button onClick={() => setAssetOpen(true)} className="asset-link">
+            <Truck size={19} />
+            <strong>{bag.name}</strong>
+            <span>{bag.dims.map((n) => fmt(n / 100, 1)).join(' × ')} m</span>
+            <SlidersHorizontal size={15} />
+          </button>
+          <div className="route-stops">
+            {routeStops.map((s) => (
+              <span key={s.id}>
+                <i style={{ background: s.color }} />
+                {s.id}. {s.name}
+                {s.id !== routeStops.at(-1)?.id && <ChevronRight size={13} />}
               </span>
-              <span>
-                <strong>{bag.name}</strong>
-                <small>
-                  {bag.dims.join(' × ')} cm ·{' '}
-                  {number(volume(bag.dims) / 1000, 1)} L
-                </small>
-              </span>
-              <SlidersHorizontal size={16} />
-            </button>
-            <div className="bag-limits">
-              <span>
-                <Weight size={13} />
-                {bag.maxMass} kg limit
-              </span>
-              <button className="text-button" onClick={() => setEditBag(true)}>
-                Bag settings <ChevronRight size={13} />
-              </button>
+            ))}
+          </div>
+          <span className="synthetic-note">
+            {synthetic ? 'Synthetic dispatch scenario' : 'Operator manifest'}
+          </span>
+        </div>
+        <section
+          className={`kpi-strip ${allMetrics ? 'show-all-metrics' : ''}`}
+          aria-label="Load performance"
+        >
+          {kpis.map((k) => (
+            <div className="kpi" key={k.label}>
+              <span>{k.label}</span>
+              <strong>
+                {k.value}
+                <small>{k.unit}</small>
+              </strong>
+              <p>{k.detail}</p>
+              <em>{k.base}</em>
             </div>
-            <button className="upload-button" onClick={() => setPhotos(true)}>
-              <Camera size={17} /> Start from photos <ArrowUpRight size={16} />
-            </button>
-            <div className="inventory-label">
-              <h3>Your essentials</h3>
-              <button
-                className="icon-button"
-                onClick={add}
-                aria-label="Add item"
-              >
-                <Plus size={18} />
-              </button>
-            </div>
-            <div className="item-list">
-              {items.map((i) => {
-                const isPacked = shown.placements.some(
-                  (p) => p.item.id === i.id,
-                );
-                return (
-                  <div
-                    className={`item-row ${selected === i.id ? 'selected' : ''}`}
-                    key={i.id}
-                  >
-                    <button
-                      className="item-main"
-                      onClick={() =>
-                        setSelected(selected === i.id ? null : i.id)
-                      }
-                      aria-label={`Select ${i.name}`}
-                      aria-pressed={selected === i.id}
-                    >
-                      <span
-                        className="item-swatch"
-                        style={{ background: i.color }}
-                      >
-                        <Box size={17} />
-                      </span>
-                      <span>
-                        <strong>{i.name}</strong>
-                        <small>
-                          {i.dims.join(' × ')} cm <span>· {i.mass} kg</span>
-                        </small>
-                        <span className="item-tags">
-                          {i.fragile && <em>Fragile</em>}
-                          {i.access === 'immediate' && (
-                            <em className="access-tag">Easy access</em>
-                          )}
-                          {i.rigidity === 'soft' && <em>Soft</em>}
-                          {!isPacked && (
-                            <em className="excluded">Not packed</em>
-                          )}
-                        </span>
-                      </span>
-                    </button>
-                    <button
-                      className="edit-item"
-                      aria-label={`Edit ${i.name}`}
-                      onClick={() => setEditing(i)}
-                    >
-                      <SlidersHorizontal size={14} />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-            {!items.length && (
-              <p className="empty-state">
-                Your bag is empty. Add an item or reset the weekend demo.
-              </p>
-            )}
-            <div className="inventory-footer">
-              <span className="source-dot" />
-              <span>
-                {items.some((i) => i.source === 'astra_estimate')
-                  ? 'Reviewed AI estimates'
-                  : items.every((i) => i.source === 'sample')
-                    ? 'Sample kit · editable measurements'
-                    : 'User-reviewed kit'}
-              </span>
-            </div>
-          </aside>
-          <section className="stage-panel">
-            <div className="stage-toolbar">
-              <p className="eyebrow">02 / FIND THE FIT</p>
+          ))}
+        </section>
+        <button
+          className="mobile-metrics-toggle"
+          aria-expanded={allMetrics}
+          onClick={() => setAllMetrics((v) => !v)}
+        >
+          {allMetrics
+            ? 'Show key metrics'
+            : 'Show payload, access and unused volume'}
+          <ChevronRight size={14} />
+        </button>
+        <div className="load-workspace">
+          <section className="digital-twin">
+            <div className="twin-toolbar">
+              <div>
+                <h2>Load digital twin</h2>
+                <span>
+                  {view === 'baseline' ? 'Simple loading' : 'Optimized load'} ·
+                  rear-door insertion
+                </span>
+              </div>
               <Tabs
                 value={view}
                 onValueChange={(v) => {
                   setView(String(v));
-                  setStep(24);
+                  setStep(30);
                   setPlaying(false);
                 }}
               >
                 <TabsList>
-                  <TabsTrigger value="baseline">First fit</TabsTrigger>
+                  <TabsTrigger value="baseline">Simple</TabsTrigger>
                   <TabsTrigger value="optimized">Optimized</TabsTrigger>
                 </TabsList>
               </Tabs>
             </div>
-            <div className="stage-title">
-              <h2>
-                {view === 'baseline'
-                  ? 'A place to start.'
-                  : 'A place for every priority.'}
-              </h2>
-              <span
-                className={`fit-tag ${packed === items.length ? '' : 'partial'}`}
-              >
-                {packed === items.length ? (
-                  <Check size={13} />
-                ) : (
-                  <Box size={13} />
-                )}{' '}
-                {packed} of {items.length} fit
-              </span>
-            </div>
-            <div className="scene-wrap">
+            <div className="cargo-scene-wrap">
               <Scene
                 plan={shown}
                 selected={selected}
@@ -513,180 +533,198 @@ export default function Planner() {
                 step={step}
                 moved={moved}
               />
-              <div className="scene-hint">
-                DRAG TO ORBIT <span>·</span> SCROLL TO ZOOM
+              <div className="twin-controls">
+                <button
+                  aria-pressed={exploded}
+                  onClick={() => setExploded((v) => !v)}
+                >
+                  <Layers size={15} />
+                  {exploded ? 'Collapse layers' : 'Separate layers'}
+                </button>
+                <span>
+                  {exploded
+                    ? 'Exploded view; extra vertical spacing'
+                    : 'Drag to rotate · scroll to zoom'}
+                </span>
               </div>
-              <button
-                className={`explode-control ${exploded ? 'active' : ''}`}
-                onClick={() => setExploded((v) => !v)}
-                aria-pressed={exploded}
-              >
-                <Layers size={16} />
-                {exploded ? 'Collapse' : 'Explode'}
-              </button>
-              {exploded && (
-                <div className="exploded-note">
-                  Exploded view · vertical gaps added for clarity
-                </div>
-              )}
-              <div className="com-key">
-                <i /> Centre of mass
+              <div className="twin-legend">
+                {routeStops.map((s) => (
+                  <span key={s.id}>
+                    <i style={{ background: s.color }} />
+                    Stop {s.id}
+                  </span>
+                ))}
+                <span>
+                  <i className="com-dot" />
+                  Centre of mass
+                </span>
               </div>
             </div>
-            {selectedPlacement ? (
-              <div className="selection-card">
-                <span
-                  className="selection-color"
-                  style={{ background: selectedPlacement.item.color }}
-                />
-                <div>
-                  <strong>{selectedPlacement.item.name}</strong>
-                  <p>
-                    {selectedPlacement.dims
-                      .map((n) => number(n, 1))
-                      .join(' × ')}{' '}
-                    cm packed ·{' '}
-                    {number(loads.get(selectedPlacement.item.id) ?? 0, 2)} kg
-                    above ·{' '}
-                    {blockers(selectedPlacement, shown.placements).length}{' '}
-                    retrieval blockers
-                  </p>
-                </div>
+            <div className="twin-selection">
+              <span className="selected-id">{selected ?? 'Select cargo'}</span>
+              <div>
+                <strong>{selectedUnit?.name ?? 'Inspect a shipment'}</strong>
+                <p>
+                  {placed
+                    ? `${placed.dims.map((n) => fmt(n)).join(' × ')} cm · ${fmt(loads.get(placed.item.id) ?? 0)} kg on top · ${unloadBlockers(placed, shown.placements).length} extraction blockers`
+                    : selectedUnit
+                      ? 'Not loaded in this plan. See the pending-cargo explanation.'
+                      : 'Choose cargo in the model or manifest.'}
+                </p>
+              </div>
+              {selectedUnit && (
                 <button
-                  className="text-button"
-                  onClick={() => setEditing(selectedPlacement.item)}
+                  className="twin-edit"
+                  onClick={() => setEditing(selectedUnit)}
+                  aria-label={`Edit ${selectedUnit.id}`}
                 >
-                  Edit <ArrowUpRight size={14} />
+                  <SlidersHorizontal size={16} />
+                  Edit
                 </button>
-              </div>
-            ) : (
-              <div className="selection-card muted">
-                <Box size={17} />
-                <p>Select an item to inspect its placement.</p>
-                <span className="proxy-note">Bounding-box model</span>
-              </div>
-            )}
-            <div className="playback">
+              )}
+            </div>
+            <div className="sequence-control">
               <button
                 className="play-button"
+                disabled={!shown.placements.length}
                 aria-label={
-                  playing ? 'Pause packing sequence' : 'Play packing sequence'
+                  playing ? 'Pause loading sequence' : 'Play loading sequence'
                 }
                 onClick={() => {
                   if (!playing) setStep(0);
                   setPlaying(!playing);
                 }}
-                disabled={!packed}
               >
-                {playing ? <Pause size={17} /> : <Play size={17} />}
+                {playing ? <Pause size={16} /> : <Play size={16} />}
               </button>
-              <div className="playback-control">
-                <div>
-                  <span>Packing sequence</span>
-                  <span>
-                    {Math.min(step, packed)} / {packed}
-                  </span>
-                </div>
-                <Slider
-                  value={[Math.min(step, packed)]}
-                  min={0}
-                  max={Math.max(1, packed)}
-                  step={1}
-                  aria-label="Packing sequence step"
-                  onValueChange={(v) => {
-                    setStep(Array.isArray(v) ? v[0] : v);
-                    setPlaying(false);
+              <span>Load sequence</span>
+              <Slider
+                aria-label="Loading step"
+                min={0}
+                max={Math.max(1, shown.placements.length)}
+                step={1}
+                value={[Math.min(step, shown.placements.length)]}
+                onValueChange={(v) => {
+                  setStep(Array.isArray(v) ? v[0] : v);
+                  setPlaying(false);
+                }}
+              />
+              <span>
+                {Math.min(step, shown.placements.length)} /{' '}
+                {shown.placements.length}
+              </span>
+            </div>
+          </section>
+          <aside className="operations-panel">
+            <div className="ops-heading">
+              <ScanLine size={20} />
+              <h2>Cargo intelligence</h2>
+            </div>
+            <p className="intelligence-source">
+              Manifest facts + deterministic checks
+            </p>
+            <div className="semantic-list">
+              {(selectedUnit
+                ? [
+                    selectedUnit,
+                    ...items
+                      .filter(
+                        (i) =>
+                          i.id !== selectedUnit.id &&
+                          (i.fragile || i.mass >= 650),
+                      )
+                      .slice(0, 2),
+                  ]
+                : items.slice(0, 3)
+              ).map((i) => (
+                <button onClick={() => setSelected(i.id)} key={i.id}>
+                  <span className="cargo-code">{i.id}</span>
+                  <div>
+                    <strong>{i.name}</strong>
+                    <p>
+                      {i.mustUnloadFirst
+                        ? 'First to unload · clear rear path required'
+                        : i.stackable === false
+                          ? `No top loading${i.orientation === 'upright' ? ' · keep upright' : i.orientation === 'flat' ? ' · keep flat' : ''}`
+                          : i.mass >= 650
+                            ? `${fmt(i.mass)} kg · floor loading checked`
+                            : `Stop ${i.deliveryStop ?? 1} · top-load limit ${fmt(i.maxTopLoad)} kg`}
+                    </p>
+                    <small>
+                      {i.source === 'astra_estimate'
+                        ? 'AI inferred · review required'
+                        : i.source === 'sample'
+                          ? i.provenance?.handling === 'manual'
+                            ? 'Sample dimensions · operator rule'
+                            : 'Synthetic manifest fact'
+                          : `${i.source} provided`}
+                    </small>
+                  </div>
+                  <ChevronRight size={14} />
+                </button>
+              ))}
+            </div>
+            <div className="balance-panel">
+              <h3>Payload distribution</h3>
+              <div className="balance-labels">
+                <span>
+                  Front half <b>{fmt(shown.metrics.frontMass)} kg</b>
+                </span>
+                <span>
+                  Rear half <b>{fmt(shown.metrics.rearMass)} kg</b>
+                </span>
+              </div>
+              <div className="mass-bar">
+                <span
+                  style={{
+                    width: `${shown.metrics.mass ? (shown.metrics.frontMass / shown.metrics.mass) * 100 : 0}%`,
                   }}
                 />
               </div>
-            </div>
-          </section>
-          <aside className="insights panel">
-            <div className="section-heading">
-              <p className="eyebrow">03 / THE DIFFERENCE</p>
-              <MoveUpRight size={17} />
-            </div>
-            <div className="hero-metric">
-              <strong>
-                {number(shown.metrics.mass, 2)}
-                <span> kg</span>
-              </strong>
-              <p>
-                {packed} items packed · {number(shown.metrics.volume, 1)} L
-                occupied
-              </p>
-            </div>
-            <div className="volume-track">
-              <span style={{ width: `${shown.metrics.utilization}%` }} />
-            </div>
-            <div className="volume-caption">
-              <span>{number(shown.metrics.utilization)}% of envelope</span>
-              <span>{number(volume(shown.container.dims) / 1000, 1)} L</span>
-            </div>
-            <div className="comparison-head">
-              <span>Same kit & constraints</span>
-              <span>First fit</span>
-              <span>Optimized</span>
-            </div>
-            {metricsRows.map((r) => (
-              <div className="comparison-row" key={r.label}>
+              <dl>
                 <div>
-                  <span>{r.label}</span>
-                  <strong>
-                    {number(r.a)}
-                    <small>{r.suffix}</small>
-                  </strong>
-                  <strong className="optimized-value">
-                    {number(r.b)}
-                    <small>{r.suffix}</small>
-                  </strong>
+                  <dt>Lateral balance</dt>
+                  <dd>{fmt(shown.metrics.balance)} / 100</dd>
                 </div>
-                <div className="dual-bars">
-                  <span style={{ width: `${(r.a / r.max) * 100}%` }} />
-                  <span style={{ width: `${(r.b / r.max) * 100}%` }} />
+                <div>
+                  <dt>COM from bulkhead</dt>
+                  <dd>{fmt(shown.metrics.com[2] / 100, 2)} m</dd>
                 </div>
-              </div>
-            ))}
-            <div className="physical-facts">
+                <div>
+                  <dt>Peak footprint load</dt>
+                  <dd>{fmt(shown.metrics.floorPeakKgM2)} kg/m²</dd>
+                </div>
+              </dl>
+              <p>Front/rear cargo mass, not axle loads.</p>
+            </div>
+            <div className="constraints-summary">
+              <ShieldCheck size={18} />
               <div>
-                <span>Rear moment proxy</span>
-                <strong>{number(shown.metrics.rearMoment, 2)} Nm</strong>
-              </div>
-              <div>
-                <span>Depth expansion</span>
-                <strong>{number(shown.metrics.expansion)}%</strong>
-              </div>
-              <div>
-                <span>Volume compressed</span>
-                <strong>{number(shown.metrics.compression)}%</strong>
+                <strong>
+                  {shown.unpacked.length
+                    ? 'Feasible partial load'
+                    : 'Geometry checks satisfied'}
+                </strong>
+                <p>Payload · door path · support · top load</p>
+                <button onClick={() => setInfo(true)}>
+                  Review model assumptions
+                  <ArrowUpRight size={13} />
+                </button>
               </div>
             </div>
-            <button className="model-note" onClick={() => setInfo(true)}>
-              <Info size={15} />
-              <span>
-                Computed geometry. Approximate physics.
-                <br />
-                See assumptions and score definitions.
-              </span>
-            </button>
           </aside>
         </div>
-        <section className="intent-panel">
-          <div className="intent-heading">
-            <span className="spark-icon">
-              <Sparkles size={20} />
-            </span>
+        <section className="copilot-panel">
+          <div className="copilot-title">
+            <Route size={22} />
             <div>
-              <h2>Pack for the way you travel.</h2>
+              <h2>Change the operation. Recalculate the load.</h2>
               <p>
                 {api.available
-                  ? 'Tell Astra what matters. The solver handles the rearranging.'
-                  : 'Try a supported request. Offline rules translate it into solver constraints.'}
+                  ? 'Astra turns operator intent into explicit constraints.'
+                  : 'Offline demo rules · connect Astra for open-ended cargo reasoning.'}
               </p>
             </div>
-            <span className="intent-mode">
-              {api.available ? api.model : 'OFFLINE INTENT RULES'}
-            </span>
           </div>
           <form
             onSubmit={(e) => {
@@ -695,69 +733,93 @@ export default function Planner() {
             }}
           >
             <input
-              aria-label="Packing request"
+              aria-label="Operator request"
               value={prompt}
               maxLength={1500}
               onChange={(e) => setPrompt(e.target.value)}
-              placeholder="I need my headphones during the flight."
+              placeholder="Shipment P14 must be unloaded first."
               disabled={busy}
             />
             <button
               className="primary"
-              type="submit"
               disabled={busy || !prompt.trim()}
+              type="submit"
             >
               {busy ? (
-                <LoaderCircle className="spin" size={17} />
+                <LoaderCircle size={16} className="spin" />
               ) : (
-                <Sparkles size={17} />
+                <ArrowRight size={17} />
               )}
-              <span>{busy ? 'Interpreting…' : 'Replan my bag'}</span>
-              <ArrowRight size={16} />
+              Replan
             </button>
           </form>
-          <div className="suggestions">
+          <div className="request-suggestions">
             <button
               disabled={busy}
               onClick={() =>
-                void request('I need my headphones during the flight.')
+                void request('Shipment P14 must be unloaded first.')
               }
             >
-              <Headphones size={14} /> Headphones during the flight
+              <ArrowDownToLine size={14} />
+              P14 unloads first
             </button>
             <button
               disabled={busy}
-              onClick={() => void request('Protect the camera more.')}
+              onClick={() => void request('Do not stack anything on C08.')}
             >
-              <ShieldCheck size={14} /> Protect my camera
+              <ShieldCheck size={14} />
+              No stacking on C08
             </button>
             <button
               disabled={busy}
-              onClick={() =>
-                void request('Make the backpack more comfortable.')
-              }
+              onClick={() => void request('Prioritize balance')}
             >
-              <Backpack size={14} /> Improve comfort
+              <Truck size={14} />
+              Prioritize balance
             </button>
             <button
               disabled={busy}
-              onClick={() => void request('Reduce the bulging.')}
+              onClick={() => void request('Respect delivery stops')}
             >
-              <Layers size={14} /> Reduce bulging
+              <Route size={14} />
+              Respect delivery stops
             </button>
           </div>
-          <div className="reasoning" aria-live="polite">
-            <span className="reason-mark">
-              <Check size={15} />
-            </span>
+          {patch && (
+            <div className="constraint-patch">
+              <strong>
+                {api.available
+                  ? 'Astra interpreted'
+                  : 'Offline rule interpreted'}
+              </strong>
+              {patch.changes.map((c) => (
+                <span key={c.id}>
+                  {c.id}
+                  {c.first ? ' → FIRST UNLOAD' : ''}
+                  {c.stop ? ` · STOP ${c.stop}` : ''}
+                  {c.noStack ? ' · NO TOP LOAD' : ''}
+                  {c.remove ? ' · REMOVE' : ''}
+                </span>
+              ))}
+              {patch.balance && <span>BALANCE PRIORITY → HIGH</span>}
+              {patch.route && <span>DELIVERY ORDER → HIGH</span>}
+              <ArrowRight size={15} />
+              <span>Deterministic solver</span>
+            </div>
+          )}
+          <div className="result-explanation" aria-live="polite">
+            <Check size={17} />
             <div>
               <p>{message}</p>
               {change && (
-                <p className="change-summary">
-                  {change.count} item(s) moved <span>·</span> Same-target access{' '}
-                  {signed(change.access, 1)} points <span>·</span> Rear moment{' '}
-                  {signed(change.moment, 2)} Nm
-                </p>
+                <strong>
+                  {change.id
+                    ? `${change.id} extraction blockers: ${change.beforeBlockers} → ${change.afterBlockers}. `
+                    : ''}
+                  {change.moved} cargo units moved. Cubic utilization{' '}
+                  {delta(change.utilization)} pp; same-target access{' '}
+                  {delta(change.access)} points.
+                </strong>
               )}
             </div>
           </div>
@@ -767,67 +829,231 @@ export default function Planner() {
             </p>
           )}
         </section>
+        <section className="manifest-section">
+          <div className="manifest-heading">
+            <div>
+              <h2>
+                Cargo manifest <span>{items.length} units</span>
+              </h2>
+              <p>
+                Measurements and company handling rules take precedence over AI
+                estimates.
+              </p>
+            </div>
+            <div>
+              <button
+                className="quiet-button"
+                onClick={() => setPhotoOpen(true)}
+              >
+                <Camera size={16} />
+                Analyze photos
+              </button>
+              <button
+                className="quiet-button"
+                onClick={() => setManifestOpen(true)}
+              >
+                <Download size={16} />
+                Import manifest
+              </button>
+              <button
+                className="quiet-button"
+                onClick={() => {
+                  if (items.length >= 30) {
+                    setError('The prototype supports at most 30 cargo units.');
+                    return;
+                  }
+                  setEditing({
+                    id: `N${Date.now().toString().slice(-6)}`,
+                    name: 'New cargo',
+                    dims: [120, 100, 100],
+                    mass: 300,
+                    color: stops[0].color,
+                    rigidity: 'rigid',
+                    minRatio: 1,
+                    fragile: false,
+                    orientation: 'upright',
+                    access: 'normal',
+                    required: true,
+                    maxTopLoad: 0,
+                    stackable: false,
+                    deliveryStop: 1,
+                    destination: stops[0].name,
+                    source: 'manual',
+                    confidence: 1,
+                    notes:
+                      'Enter verified external dimensions and handling limits.',
+                  });
+                }}
+              >
+                <Plus size={16} />
+                Add cargo
+              </button>
+            </div>
+          </div>
+          <div className="manifest-filter">
+            <label>
+              <Search size={16} />
+              <input
+                aria-label="Search cargo"
+                placeholder="Search ID, cargo or destination"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </label>
+            <Tabs
+              value={stopFilter}
+              onValueChange={(v) => setStopFilter(String(v))}
+            >
+              <TabsList>
+                <TabsTrigger value="all">All stops</TabsTrigger>
+                {routeStops.map((s) => (
+                  <TabsTrigger key={s.id} value={String(s.id)}>
+                    Stop {s.id}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <button
+              className="text-button"
+              onClick={() =>
+                download('cargo-manifest.json', manifestText(items))
+              }
+            >
+              Download JSON
+            </button>
+          </div>
+          <Table className="cargo-table">
+            <TableHeader>
+              <TableRow>
+                <TableHead>Cargo ID / description</TableHead>
+                <TableHead>W × H × L · cm</TableHead>
+                <TableHead>Weight</TableHead>
+                <TableHead>Destination</TableHead>
+                <TableHead>Stacking</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>
+                  <span className="sr-only">Edit cargo</span>
+                </TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {filtered.map((i) => {
+                const loaded = shown.placements.find((p) => p.item.id === i.id);
+                return (
+                  <TableRow key={i.id} data-selected={selected === i.id}>
+                    <TableCell>
+                      <button
+                        className="manifest-select"
+                        onClick={() => setSelected(i.id)}
+                      >
+                        <span
+                          style={{
+                            background:
+                              stops[((i.deliveryStop ?? 1) - 1) % 3].color,
+                          }}
+                        />
+                        <strong>{i.id}</strong>
+                        <span>{i.name}</span>
+                      </button>
+                    </TableCell>
+                    <TableCell>{i.dims.join(' × ')}</TableCell>
+                    <TableCell>{fmt(i.mass)} kg</TableCell>
+                    <TableCell>
+                      <b>Stop {i.deliveryStop ?? 1}</b>
+                      <small>{i.destination}</small>
+                    </TableCell>
+                    <TableCell>
+                      {i.stackable === false ? (
+                        <span className="no-stack">No top loading</span>
+                      ) : (
+                        `${fmt(i.maxTopLoad)} kg max`
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <span
+                        className={`load-status ${loaded ? 'loaded' : 'pending'}`}
+                      >
+                        {loaded ? <Check size={12} /> : <Box size={12} />}{' '}
+                        {loaded ? `Loaded · ${loaded.order}` : 'Pending'}
+                      </span>
+                      {i.mustUnloadFirst && (
+                        <small className="first-note">First unload</small>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <button
+                        className="icon-button"
+                        aria-label={`Edit cargo ${i.id}`}
+                        onClick={() => setEditing(i)}
+                      >
+                        <SlidersHorizontal size={16} />
+                      </button>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </Table>
+          {!filtered.length && (
+            <p className="empty-state">
+              {items.length
+                ? 'No cargo matches these filters. Clear the search or choose All stops.'
+                : 'No cargo units. Import a manifest, add cargo, or reset the demo.'}
+            </p>
+          )}
+        </section>
         {shown.unpacked.length > 0 && (
-          <section className="failure-panel">
-            <h2>Let’s resolve what doesn’t fit.</h2>
+          <section className="pending-section">
+            <h2>{shown.unpacked.length} cargo units need assignment</h2>
             {shown.unpacked.map((u) => (
               <div key={u.item.id}>
                 <strong>
-                  {u.item.name} {u.item.required ? '· required' : '· optional'}
+                  {u.item.id} · {u.item.name}
                 </strong>
                 <p>{u.reason}</p>
+                <button
+                  className="text-button"
+                  onClick={() => setEditing(u.item)}
+                >
+                  Review cargo
+                  <ChevronRight size={14} />
+                </button>
               </div>
             ))}
-            <p className="small muted">
-              A limited search can miss a feasible arrangement. These results
-              are not a proof of impossibility unless a dimension, opening, or
-              weight bound is exceeded.
-            </p>
           </section>
         )}
-        <section className="instructions">
-          <div className="instructions-heading">
-            <div>
-              <p className="eyebrow">FROM PLAN TO PACK</p>
-              <h2>One item at a time.</h2>
-            </div>
-            <span className="muted small">
-              {view === 'baseline' ? 'First-fit' : 'Optimized'} insertion order
-              · top opening
-            </span>
+        <section className="loading-instructions">
+          <div>
+            <h2>Loading sequence</h2>
+            <span>Rear-door insertion · {shown.placements.length} steps</span>
           </div>
-          <div className="steps-grid">
+          <ol>
             {shown.placements.map((p) => (
-              <button
-                key={p.item.id}
-                className={`step-card ${selected === p.item.id ? 'selected' : ''}`}
-                onClick={() => {
-                  setSelected(p.item.id);
-                  setStep(p.order);
-                  setPlaying(false);
-                }}
-              >
-                <span
-                  className="step-number"
-                  style={{ borderColor: p.item.color }}
+              <li key={p.item.id}>
+                <button
+                  onClick={() => {
+                    setSelected(p.item.id);
+                    setStep(p.order);
+                    setPlaying(false);
+                    document
+                      .getElementById('main')
+                      ?.scrollIntoView({ behavior: 'auto' });
+                  }}
                 >
-                  {String(p.order).padStart(2, '0')}
-                </span>
-                <div>
-                  <h3>{p.item.name}</h3>
+                  <span>{String(p.order).padStart(2, '0')}</span>
+                  <strong>{p.item.id}</strong>
                   <p>{instruction(p, shown)}</p>
-                </div>
-                <ChevronRight size={16} />
-              </button>
+                  <ChevronRight size={15} />
+                </button>
+              </li>
             ))}
-          </div>
+          </ol>
         </section>
-        <footer className="footer">
+        <footer>
+          <span>Packwise Cargo · Operational decision support</span>
           <span>
-            packwise <span> / </span> Make room for what matters.
-          </span>
-          <span>
-            {plan.tried} candidate plans · reproducible search · cm / kg
+            {plan.tried} reproducible candidate plans · No certified loading
+            approval
           </span>
         </footer>
       </main>
@@ -853,84 +1079,103 @@ export default function Planner() {
           }
         />
       )}
-      {editBag && (
+      {assetOpen && (
         <BagEditor
           bag={bag}
-          onClose={() => setEditBag(false)}
+          onClose={() => setAssetOpen(false)}
           onSave={(b) => recompute(items, b)}
         />
       )}
-      {photos && (
-        <PhotoInput
-          available={api.available}
-          onClose={() => setPhotos(false)}
-          onApply={(i, b) =>
+      {manifestOpen && (
+        <ManifestInput
+          items={items}
+          onClose={() => setManifestOpen(false)}
+          onApply={(i) =>
             recompute(
               i,
-              b,
-              defaultPreferences,
-              'Reviewed photo estimates loaded. You can correct every item and the bag settings.',
+              bag,
+              { ...defaultPreferences, route: 1 },
+              'Company manifest imported. Quantities expanded; supplied measurements are authoritative.',
+            )
+          }
+        />
+      )}
+      {photoOpen && (
+        <PhotoInput
+          asset={bag}
+          available={api.available}
+          onClose={() => setPhotoOpen(false)}
+          onApply={(i) =>
+            recompute(
+              mergePhotoCargo(items, i),
+              bag,
+              prefs,
+              'Reviewed AI cargo added. Existing manifest IDs and asset measurements were preserved.',
             )
           }
         />
       )}
       <Dialog open={info} onOpenChange={setInfo}>
         <DialogContent className="info-dialog">
-          <DialogTitle>What this packing model knows.</DialogTitle>
+          <DialogTitle>Load model and constraints</DialogTitle>
           <DialogDescription>
-            A practical planning aid with explicit assumptions.
+            Transparent prototype assumptions. Geometry is calculated;
+            operational approval remains with your team.
           </DialogDescription>
           <div className="model-explainer">
-            <h3>Hard checks</h3>
+            <h3>Hard constraints</h3>
             <p>
-              No overlapping boxes, no envelope or weight overflow. Every item
-              passes a rectangular top opening in its packed orientation, has a
-              clear vertical insertion path, and rests on at least 80% support
-              area with its centre supported. Loads propagate down through
-              contact surfaces.
+              Rigid rear-door asset; centred, floor-aligned rectangular opening.
+              Cargo follows a straight horizontal insertion corridor at its
+              packed height. Boxes cannot intersect or exceed the payload, door,
+              or asset dimensions. A raised box needs at least 80% contact area
+              and a supported projected centre. Top loads propagate through
+              supports. Non-stackable units carry no load above. Floor loading
+              divides supported mass by the full footprint.
             </p>
-            <h3>What the scores mean</h3>
+            <h3>First to unload</h3>
             <p>
-              <b>Balance:</b> lateral centre-of-mass centering, 0–100.{' '}
-              <b>Access:</b> overhead footprint blockers and distance from the
-              opening; uses immediate-access items when requested, otherwise all
-              packed items. <b>Protection:</b> fragile-item wall clearance and
-              nearby soft material; a heuristic, not a damage probability. No
-              fragile item means this check scores 100 as not applicable.
+              A first-unload unit must have no cargo in its rear extraction
+              corridor and no cargo above its footprint. Forklift, pallet-jack,
+              strap, turning and lifting clearance are not simulated. Loading
+              playback illustrates sequence; rearrangement animation is not a
+              certified motion path.
             </p>
+            <h3>Metrics</h3>
             <p>
-              <b>Rear moment:</b> sum of mass × distance from rear panel ×
-              gravity, in Nm. Lower suggests weight is closer to your back; this
-              is not an ergonomic assessment. <b>Volume:</b> occupied bounding
-              boxes, after compression. Higher utilization does not always mean
-              a better plan.
-            </p>
-            <h3>What is approximate</h3>
-            <p>
-              All objects are cuboid proxies. Soft items compress along one
-              original dimension. The bag can expand in depth within your limit.
-              No cloth simulation, complete protective wrapping, curved opening,
-              strap forces, or tilting insertion is modeled. Upright and flat
-              both preserve the original vertical dimension.
-            </p>
-            <h3>AI and your data</h3>
-            <p>
-              {api.available
-                ? `Runtime ${api.model} is configured.`
-                : 'Runtime Astra is not configured. The demo kit and intent rules work offline.'}{' '}
-              Photos are sent to OpenAI for analysis only when requested and are
-              not saved by this app. API responses use store:false. Review
-              inferred dimensions, weights and load limits. A manual edit takes
-              precedence.
+              Cubic and payload utilization are occupied bounding volume and
+              packed mass divided by capacity. Delivery access averages 100/(1 +
+              later-stop blockers), or all extraction blockers for priority
+              units. Rehandling is a count of later-stop blocker pairs, not
+              measured labour time. Balance is normalized COM distance from the
+              lateral/longitudinal midline. Front/rear figures are cargo mass in
+              each half, not axle loads.
             </p>
             <h3>Fair comparison</h3>
             <p>
-              First-fit and multi-start search use the same checks, allowed
-              compression, and expansion bounds. Missing required items outrank
-              every soft score. The search includes first-fit candidates and
-              never lowers that common objective. It is not an exact optimizer.
-              All per-item quality metrics describe packed items; compare packed
-              counts first.
+              Both algorithms use identical constraints. Multi-start search
+              includes the baseline. Required-unit count takes priority,
+              followed by total units, occupied volume and soft quality. A
+              bounded heuristic can miss a feasible plan. No claim about
+              vehicles avoided follows from a partial first-fit result.
+            </p>
+            <h3>Astra and data authority</h3>
+            <p>
+              {api.available
+                ? 'Runtime Astra is configured; API requests can still fail.'
+                : 'The runtime API is offline. The sample manifest and advertised intent rules work without a key.'}{' '}
+              Astra interprets cargo photos and operator language. Its patches
+              never invent coordinates or KPI improvements. Photo estimates are
+              reviewed; existing company IDs and asset measurements cannot be
+              overwritten by photo import. Images are only sent on Analyze, not
+              stored by this app, and Responses uses store:false.
+            </p>
+            <h3>Scope</h3>
+            <p>
+              This synthetic 20-unit truck scenario demonstrates an extensible
+              cargo + asset + constraints model. Aircraft contours, vessel
+              stability, axle limits, securing, dangerous-goods rules, legal
+              compliance and fleet optimization are not implemented.
             </p>
           </div>
         </DialogContent>
